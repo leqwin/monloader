@@ -1,0 +1,24 @@
+{{define "add"}}{{template "doc_head" .}}
+{{template "monbooru_banner" .}}
+<main id="landing">
+  <img src="{{.BooruLogo}}" alt="" class="landing-logo">
+  <h1>{{.BooruName}}</h1>
+  <form id="add-form" class="add-form" hx-post="/" hx-target="#add-flash" hx-swap="innerHTML">
+    <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+    <div class="add-row">
+      <div class="search-input-wrap">
+        <input id="add-input" type="text" name="url" autocomplete="off" class="needs-monbooru"{{if not .MonbooruConfigured}} disabled{{end}}
+               placeholder="paste a booru URL - post, pool, tag search, artist...">
+      </div>
+      <button type="submit" class="needs-monbooru"{{if not .MonbooruConfigured}} disabled{{end}}>download</button>
+    </div>
+  </form>
+  <div class="hint"><a href="https://github.com/mikf/gallery-dl/blob/master/docs/supportedsites.md" target="_blank" rel="noopener">see the supported sites</a></div>
+  <div id="add-flash" class="hint"></div>
+  <div class="links">
+    <a href="/queue">[ queue ]</a>
+    <a href="/settings">[ settings ]</a>
+  </div>
+</main>
+{{template "footer" .}}
+{{template "doc_foot" .}}{{end}}

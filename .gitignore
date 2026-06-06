@@ -1,0 +1,19 @@
+# Built binary
+/monloader
+
+# Local config
+/monloader.toml
+
+# Runtime volumes
+/work/
+/config/
+cookies/
+*.sqlite
+
+# Test / coverage artifacts
+cover.out
+coverage.html
+coverage.out
+
+# IDE / editor
+.vscode/

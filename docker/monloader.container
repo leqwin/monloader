@@ -1,0 +1,24 @@
+[Container]
+ContainerName=monloader
+Image=ghcr.io/leqwin/monloader:latest
+
+PublishPort=127.0.0.1:8081:8081
+
+NoNewPrivileges=true
+DropCapability=ALL
+
+Volume=/path/to/monloader/config:/config
+
+Environment=MONLOADER_SERVER_BIND_ADDRESS=0.0.0.0:8081
+Environment=MONLOADER_MONBOORU_API_URL=http://monbooru:8080
+Environment=MONLOADER_MONBOORU_API_TOKEN=
+
+HealthCmd=["sh","-c","curl --fail --silent --max-time 5 http://localhost:8081/health || exit 1"]
+HealthInterval=30s
+HealthRetries=3
+HealthStartPeriod=10s
+HealthTimeout=5s
+HealthOnFailure=restart
+
+[Install]
+WantedBy=default.target

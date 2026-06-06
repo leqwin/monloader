@@ -1,0 +1,72 @@
+{{define "queue_rows"}}
+{{if not .Jobs}}<tr><td colspan="6" class="hint">queue is empty</td></tr>{{end}}
+{{range .Jobs}}
+<tr class="job-row">
+  <td class="st-{{.Status}}">{{.Status}}</td>
+  <td class="queue-url">{{.URL}}</td>
+  <td>{{.Site}}</td>
+  <td>{{.Gallery}}</td>
+  <td class="queue-summary">
+    {{if and (eq .Summary.Total 0) .ErrorCode}}
+    <span class="o-failed" title="{{.Error}}">failed - {{.ErrorCode}}</span>
+    {{else if and (eq .Summary.Total 0) (eq .Status "succeeded")}}
+    <span class="hint">no posts matched</span>
+    {{else}}
+    <span class="o-created">{{.Summary.Created}} created</span>
+    <span class="o-duplicate">{{.Summary.Duplicate}} duplicate</span>
+    <span class="o-skipped_archive">{{.Summary.Skipped}} skipped</span>
+    <span class="o-failed">{{.Summary.Failed}} failed</span>
+    {{if .Summary.Canceled}}<span class="o-canceled">{{.Summary.Canceled}} canceled</span>{{end}}
+    <span>{{.Summary.Total}} total</span>
+    {{if and .Capped (ne .Status "canceled") (ne .Status "failed")}}<span class="o-capped" title="only the first {{.Cap}} were fetched; use continue to get the next">capped at {{.Cap}}</span>{{end}}
+    {{if .ErrorCode}}<span class="o-failed" title="{{.Error}}">{{.ErrorCode}}</span>{{end}}
+    {{end}}
+  </td>
+  <td>
+    <span class="actions">
+      {{if or (eq .Status "queued") (eq .Status "running")}}
+        <button hx-delete="/queue/{{.ID}}" hx-target="#queue-rows" hx-swap="innerHTML"
+                hx-headers='{"X-CSRF-Token":"{{$.CSRFToken}}"}'>cancel</button>
+      {{else}}
+        {{if and .Capped (ne .Status "canceled") (ne .Status "failed")}}
+        <button hx-post="/queue/{{.ID}}/continue" hx-target="#queue-rows" hx-swap="innerHTML"
+                hx-headers='{"X-CSRF-Token":"{{$.CSRFToken}}"}'
+                title="download the next items past the cap">continue</button>
+        {{end}}
+        <button hx-post="/queue/{{.ID}}/retry" hx-target="#queue-rows" hx-swap="innerHTML"
+                hx-headers='{"X-CSRF-Token":"{{$.CSRFToken}}"}'>retry</button>
+        <button hx-post="/queue/{{.ID}}/retry?force=1" hx-target="#queue-rows" hx-swap="innerHTML"
+                hx-headers='{"X-CSRF-Token":"{{$.CSRFToken}}"}'
+                title="re-download, ignoring the gallery-dl archive">force download</button>
+        <button hx-delete="/queue/{{.ID}}" hx-target="#queue-rows" hx-swap="innerHTML"
+                hx-headers='{"X-CSRF-Token":"{{$.CSRFToken}}"}'>remove</button>
+      {{end}}
+    </span>
+  </td>
+</tr>
+{{if .Items}}
+<tr class="items-row">
+  <td colspan="6">
+    <details data-job="{{.ID}}" open>
+      <summary>{{len .Items}} item{{if ne (len .Items) 1}}s{{end}}</summary>
+      <div class="job-items">
+        {{range .Items}}
+        <div class="item-row">
+          <span class="item-num">{{if .URL}}<a href="{{.URL}}" target="_blank" rel="noopener">{{if .Num}}#{{.Num}}{{else if .PostID}}{{.PostID}}{{else}}source{{end}}</a>{{else}}{{if .Num}}#{{.Num}}{{else}}{{.PostID}}{{end}}{{end}}</span>
+          {{if eq .ErrorCode "canceled"}}
+          <span class="o-canceled">canceled</span>
+          {{else}}
+          <span class="o-{{.Outcome}}">{{if .Outcome}}{{.Outcome}}{{else}}{{.Status}}{{end}}</span>
+          {{if .MonbooruID}}<a href="{{$.MonbooruURL}}/images/{{.MonbooruID}}" target="_blank" rel="noopener">#{{.MonbooruID}}</a>{{end}}
+          {{if .TagWarnings}}<span class="o-warn" title="{{join .TagWarnings ", "}}">{{len .TagWarnings}} tag warning{{if ne (len .TagWarnings) 1}}s{{end}}</span>{{end}}
+          {{if .ErrorCode}}<span class="o-failed" title="{{.Error}}">{{.ErrorCode}}</span>{{end}}
+          {{end}}
+        </div>
+        {{end}}
+      </div>
+    </details>
+  </td>
+</tr>
+{{end}}
+{{end}}
+{{end}}

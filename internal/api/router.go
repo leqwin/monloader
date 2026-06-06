@@ -1,0 +1,141 @@
+package api
+
+import (
+	"crypto/subtle"
+	"encoding/json"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/leqwin/monloader/internal/config"
+	"github.com/leqwin/monloader/internal/gdl"
+	"github.com/leqwin/monloader/internal/mapping"
+	"github.com/leqwin/monloader/internal/queue"
+)
+
+// Handler serves monloader's own /api/v1/ surface.
+type Handler struct {
+	queue      *queue.Queue
+	runner     gdl.Runner
+	mapper     *mapping.Mapper
+	cfg        *config.Provider
+	extractors []gdl.Extractor
+	version    string
+	gdlVersion string
+}
+
+// New builds the API handler. extractors is the cached --list-extractors
+// result; version and gdlVersion feed /health.
+func New(q *queue.Queue, runner gdl.Runner, mapper *mapping.Mapper, cfg *config.Provider, extractors []gdl.Extractor, version, gdlVersion string) *Handler {
+	return &Handler{
+		queue:      q,
+		runner:     runner,
+		mapper:     mapper,
+		cfg:        cfg,
+		extractors: extractors,
+		version:    version,
+		gdlVersion: gdlVersion,
+	}
+}
+
+// Mount registers every API route on mux. /health, /openapi.json, and /docs
+// are unauthenticated; the rest go through the bearer-auth gate.
+func (h *Handler) Mount(mux *http.ServeMux) {
+	mux.HandleFunc("GET /health", h.health)
+	mux.HandleFunc("GET /api/v1/openapi.json", h.openAPIJSON)
+	mux.HandleFunc("GET /api/v1/docs", h.openAPIDocs)
+
+	mux.HandleFunc("POST /api/v1/queue", h.auth(h.enqueue))
+	mux.HandleFunc("GET /api/v1/queue", h.auth(h.listJobs))
+	mux.HandleFunc("GET /api/v1/queue/{id}", h.auth(h.getJob))
+	mux.HandleFunc("POST /api/v1/queue/{id}/retry", h.auth(h.retryJob))
+	mux.HandleFunc("POST /api/v1/queue/{id}/continue", h.auth(h.continueJob))
+	mux.HandleFunc("DELETE /api/v1/queue/{id}", h.auth(h.deleteJob))
+
+	mux.HandleFunc("GET /api/v1/sites", h.auth(h.listSites))
+	mux.HandleFunc("POST /api/v1/sites/{name}/test", h.auth(h.testSite))
+
+	// CORS preflight for the future browser extension.
+	mux.HandleFunc("OPTIONS /api/v1/", func(w http.ResponseWriter, r *http.Request) {
+		setCORS(w, r)
+		w.WriteHeader(http.StatusNoContent)
+	})
+}
+
+// auth gates a handler behind the optional bearer token. When no token is
+// configured the API is open (LAN trust). CORS headers are set on
+// every API response so the extension's origin can call from a browser.
+func (h *Handler) auth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		setCORS(w, r)
+		token := h.cfg.Current().Auth.APIToken
+		if token == "" {
+			next(w, r)
+			return
+		}
+		const prefix = "Bearer "
+		got := r.Header.Get("Authorization")
+		if !strings.HasPrefix(got, prefix) {
+			apiError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid authorization header")
+			return
+		}
+		if subtle.ConstantTimeCompare([]byte(got[len(prefix):]), []byte(token)) != 1 {
+			apiError(w, http.StatusUnauthorized, "unauthorized", "invalid bearer token")
+			return
+		}
+		next(w, r)
+	}
+}
+
+// setCORS reflects the request Origin so the browser extension (a distinct
+// origin) can call the API. On a LAN this permissiveness is acceptable; the
+// bearer token, when set, is the real gate.
+func setCORS(w http.ResponseWriter, r *http.Request) {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		origin = "*"
+	}
+	w.Header().Set("Access-Control-Allow-Origin", origin)
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+	w.Header().Set("Vary", "Origin")
+}
+
+func apiError(w http.ResponseWriter, status int, code, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg, "code": code})
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+// apiPathInt64 parses a numeric path segment.
+func apiPathInt64(w http.ResponseWriter, r *http.Request, name string) (int64, bool) {
+	v, err := strconv.ParseInt(r.PathValue(name), 10, 64)
+	if err != nil {
+		apiError(w, http.StatusBadRequest, "invalid_request", "invalid "+name)
+		return 0, false
+	}
+	return v, true
+}
+
+// parsePage reads page + limit, clamping limit to maxLimit.
+func parsePage(r *http.Request, defaultLimit, maxLimit int) (page, limit int) {
+	page, limit = 1, defaultLimit
+	q := r.URL.Query()
+	if p := q.Get("page"); p != "" {
+		if n, err := strconv.Atoi(p); err == nil && n > 0 {
+			page = n
+		}
+	}
+	if l := q.Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 {
+			limit = min(n, maxLimit)
+		}
+	}
+	return page, limit
+}

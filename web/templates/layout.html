@@ -1,0 +1,45 @@
+{{define "doc_head"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}}</title>
+  <meta name="csrf-token" content="{{.CSRFToken}}">
+  <link rel="icon" type="image/png" href="{{.BooruFavicon}}">
+  <link rel="stylesheet" href="/static/main.css">
+  {{if .CustomCSS}}<link rel="stylesheet" href="/custom.css">{{end}}
+  <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/main.js" defer></script>
+</head>
+<body>
+{{end}}
+
+{{define "topbar"}}
+  <div id="topbar">
+    <a href="/" id="logo"><img src="{{.BooruLogo}}" alt="" class="topbar-logo"><span>{{.BooruName}}</span></a>
+    <nav>
+      <a href="/queue" {{if eq .ActiveNav "queue"}}class="active"{{end}}>queue</a>
+      <a href="/settings" {{if eq .ActiveNav "settings"}}class="active"{{end}}>settings</a>
+    </nav>
+    {{if .AuthEnabled}}
+    <div id="topbar-right">
+      <form method="POST" action="/logout" style="display:inline">
+        <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+        <button type="submit">logout</button>
+      </form>
+    </div>
+    {{end}}
+  </div>
+{{end}}
+
+{{define "footer"}}
+  <footer id="footer">
+    {{template "conn_light" .}}
+    <div><a href="/api/v1/docs" target="_blank" rel="noopener">api docs</a> &middot; <a href="{{.RepoURL}}" target="_blank" rel="noopener">monloader</a> {{.Version}}{{if .GalleryDLVersion}} &middot; <a href="https://github.com/mikf/gallery-dl" target="_blank" rel="noopener">gallery-dl</a> {{.GalleryDLVersion}}{{end}}</div>
+  </footer>
+{{end}}
+
+{{define "doc_foot"}}
+</body>
+</html>
+{{end}}

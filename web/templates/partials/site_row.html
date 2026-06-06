@@ -1,0 +1,24 @@
+{{define "site_row"}}
+<tr>
+  <td>{{.Category}}</td>
+  <td>{{if .NeedsCred}}<span class="badge badge-warn">{{.Login}} !</span>{{else}}<span class="badge">{{.Login}}</span>{{end}}</td>
+  <td>{{if .Site}}{{.Site.Gallery}}{{else}}-{{end}}</td>
+  <td>{{if .Site}}{{if .Site.Cookies}}set{{else}}-{{end}}{{else}}-{{end}}</td>
+  <td class="site-state" id="state-{{.Category}}">{{if not .LastReached.IsZero}}<span class="site-last" title="last reached {{stampUTC .LastReached}}">last ok {{humanSince .LastReached}}</span>{{end}}</td>
+  <td class="site-actions"><span class="actions">
+    <button type="button" hx-post="/settings/sites/{{.Category}}/test" hx-target="#state-{{.Category}}" hx-swap="innerHTML"
+            hx-headers='{"X-CSRF-Token":"{{.CSRFToken}}"}'
+            hx-on::before-request="document.getElementById('state-{{.Category}}').innerHTML='<span class=&quot;hint&quot;>testing...</span>'">test</button>
+    <button type="button" class="edit-site" data-site="{{.Category}}"
+        data-username="{{if .Site}}{{.Site.Username}}{{end}}"
+        data-userid="{{if .Site}}{{.Site.UserID}}{{end}}"
+        data-gallery="{{if .Site}}{{.Site.Gallery}}{{end}}"
+        data-cookies="{{if .Site}}{{.Site.Cookies}}{{end}}"
+        data-haskey="{{if .Site}}{{if .Site.APIKey}}1{{end}}{{end}}">edit</button>
+    {{if .Site}}<form method="POST" action="/settings/sites/{{.Category}}/reset">
+      <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+      <button type="submit" title="drop this site's credentials and revert to defaults">reset</button>
+    </form>{{end}}
+  </span></td>
+</tr>
+{{end}}

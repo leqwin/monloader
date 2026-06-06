@@ -1,0 +1,180 @@
+{{define "settings"}}{{template "doc_head" .}}
+{{template "topbar" .}}
+<main id="content">
+  <h1 style="margin-bottom:12px">settings</h1>
+
+  <section class="settings-section" id="monbooru">
+    <h2>monbooru</h2>
+    {{if eq .FlashSection "monbooru"}}<div class="flash flash-{{.FlashKind}}">{{.Flash}}</div>{{end}}
+    <form method="POST" action="/settings/monbooru">
+      <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+      <div class="field">
+        <label>api url</label>
+        <input type="text" name="api_url" value="{{.Cfg.Monbooru.APIURL}}">
+      </div>
+      <div class="field">
+        <label>web url</label>
+        <input type="text" name="web_url" value="{{.Cfg.Monbooru.WebURL}}" placeholder="(blank = same as api url)">
+      </div>
+      <div class="field">
+        <label>api token</label>
+        <input type="password" name="api_token" placeholder="{{if .TokenSet}}(set - leave blank to keep){{else}}(unset){{end}}">
+      </div>
+      <div class="field">
+        <label>default gallery</label>
+        {{if .Galleries}}
+        <select name="default_gallery">
+          {{range .Galleries}}<option value="{{.Name}}" {{if eq .Name $.Cfg.Monbooru.DefaultGallery}}selected{{end}}>{{.Name}} ({{.Images}} img)</option>{{end}}
+        </select>
+        {{else}}
+        <input type="text" name="default_gallery" value="{{.Cfg.Monbooru.DefaultGallery}}">
+        <span class="hint">(galleries unavailable; monbooru unreachable)</span>
+        {{end}}
+      </div>
+      <div class="section-actions">
+        <button type="submit" formaction="/settings/monbooru/test" formmethod="POST">test connection</button>
+        <button type="submit">save</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="settings-section">
+    <h2>monloader authentication</h2>
+    <div id="flash-auth"></div>
+    <div class="settings-cols">
+      {{template "auth_password_section" (dict "AuthEnabled" .Cfg.Auth.EnablePassword "CSRFToken" .CSRFToken)}}
+      <div class="settings-sub">
+        <h4>api key</h4>
+        <p class="field-hint">{{if .Cfg.Auth.APIToken}}an API key is set; the JSON API requires a bearer token.{{else}}no API key set; the JSON API is open on the LAN.{{end}}</p>
+        <form hx-post="/settings/auth/token" hx-target="#flash-auth" hx-swap="innerHTML">
+          <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+          <button type="submit">{{if .Cfg.Auth.APIToken}}regenerate api key{{else}}generate api key{{end}}</button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <section class="settings-section" id="downloads">
+    <h2>downloads</h2>
+    {{if eq .FlashSection "downloads"}}<div class="flash flash-{{.FlashKind}}">{{.Flash}}</div>{{end}}
+    <form method="POST" action="/settings/downloader">
+      <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+      <div class="downloads-grid">
+        <div class="dl-field">
+          <label>concurrency</label>
+          <input type="text" name="concurrency" value="{{.Cfg.Downloader.Concurrency}}">
+          <span class="field-hint">parallel download workers (applies on restart)</span>
+        </div>
+        <div class="dl-field">
+          <label>sleep / request (s)</label>
+          <input type="text" name="sleep_request" value="{{.Cfg.GalleryDL.SleepRequest}}">
+          <span class="field-hint">delay between requests</span>
+        </div>
+        <div class="dl-field">
+          <label>max items / job</label>
+          <input type="text" name="max_items_per_job" value="{{.Cfg.Downloader.MaxItemsPerJob}}">
+          <span class="field-hint">cap on posts per URL</span>
+        </div>
+        <div class="dl-field">
+          <label>default folder</label>
+          <input type="text" name="default_folder" value="{{.Cfg.Downloader.DefaultFolder}}">
+          <span class="field-hint">monbooru subfolder for pushes</span>
+        </div>
+      </div>
+      <div class="section-actions">
+        <button type="submit">save</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="settings-section" id="sites">
+    <h2 class="sites-title"><span>sites <span class="hint">({{len .BooruSites}} boorus, {{len .MangaSites}} manga / comics)</span></span><a class="sites-title-link" href="https://github.com/mikf/gallery-dl/blob/master/docs/supportedsites.md" target="_blank" rel="noopener">gallery-dl supported sites</a></h2>
+    {{if eq .FlashSection "sites"}}<div class="flash flash-{{.FlashKind}}">{{.Flash}}</div>{{end}}
+    <p class="field-hint">login - <strong>none</strong>: no auth &middot; <strong>api (opt)</strong>: optional key, higher rate limits &middot; <strong>api key</strong>: key required &middot; <strong>cookies</strong>: needs a cookies file</p>
+
+    {{template "sites_table" (dict "Heading" "boorus" "Rows" .BooruSites)}}
+    {{template "sites_table" (dict "Heading" "manga / comics" "Rows" .MangaSites)}}
+
+    <dialog id="site-edit-dialog" data-cookies-dir="{{.Cfg.GalleryDL.CookiesDir}}">
+      <form method="POST" action="/settings/sites">
+        <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+        <input type="hidden" name="name" id="se-name">
+        <p>edit <strong id="se-title"></strong> credentials and target gallery</p>
+        <div class="field"><label>username</label><input type="text" name="username" id="se-username"></div>
+        <div class="field"><label>api key</label><input type="password" name="api_key" id="se-apikey"></div>
+        <div class="field"><label>user id</label><input type="text" name="user_id" id="se-userid"></div>
+        <div class="field"><label>gallery</label>
+          {{if .Galleries}}
+          <select name="gallery" id="se-gallery">
+            <option value="">(default gallery)</option>
+            {{range .Galleries}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+          </select>
+          {{else}}
+          <input type="text" name="gallery" id="se-gallery">
+          {{end}}
+        </div>
+        <div class="field"><label>cookies file</label><input type="text" name="cookies" id="se-cookies"></div>
+        <p class="field-hint">Fill only the credentials this site needs; gallery is the target monbooru gallery (blank = default); cookies file is a path to a gallery-dl cookies.txt.</p>
+        <div class="dialog-actions">
+          <button type="button" onclick="document.getElementById('site-edit-dialog').close()">cancel</button>
+          <button type="submit">save site</button>
+        </div>
+      </form>
+    </dialog>
+  </section>
+
+  <section class="settings-section" id="advanced">
+    <h2>advanced</h2>
+    {{if eq .FlashSection "advanced"}}<div class="flash flash-{{.FlashKind}}">{{.Flash}}</div>{{end}}
+    <form method="POST" action="/settings/raw">
+      <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+      <p class="hint">raw gallery-dl config (JSON):</p>
+      <textarea name="raw_config">{{.Cfg.GalleryDL.RawConfig}}</textarea>
+      <div class="section-actions">
+        <button type="submit">save raw config</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="settings-section">
+    <h2>stats</h2>
+    <div class="stats-cols">
+      <div class="settings-sub">
+        <h4>process memory</h4>
+        <table class="stats-table">
+          <tbody>
+            {{if .Stats.Mem.RSS}}
+            <tr><th>Process memory (RSS)</th><td>{{humanBytes .Stats.Mem.RSS}}</td></tr>
+            {{else}}
+            <tr><th>Go runtime (reserved)</th><td>{{humanBytes .Stats.Mem.Sys}}</td></tr>
+            {{end}}
+            <tr><th class="stats-d1">Go heap (live objects)</th><td>{{humanBytes .Stats.Mem.HeapAlloc}}</td></tr>
+            <tr><th>Goroutines</th><td>{{.Stats.Mem.Goroutines}}</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="settings-sub">
+        <h4>gallery-dl</h4>
+        <table class="stats-table">
+          <tbody>
+            <tr><th>Version</th><td>{{if .Stats.GDLVersion}}{{.Stats.GDLVersion}}{{else}}not available{{end}}</td></tr>
+            <tr><th>Extractors</th><td>{{.Stats.Extractors}}</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="settings-sub">
+        <h4>queue</h4>
+        <table class="stats-table">
+          <tbody>
+            <tr><th>Workers</th><td>{{.Stats.Queue.Workers}}</td></tr>
+            <tr><th>Queued</th><td>{{.Stats.Queue.Queued}}</td></tr>
+            <tr><th>Running</th><td>{{.Stats.Queue.Running}}</td></tr>
+            <tr><th>Finished (recent)</th><td>{{.Stats.Queue.Finished}}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</main>
+{{template "footer" .}}
+{{template "doc_foot" .}}{{end}}

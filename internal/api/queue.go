@@ -1,0 +1,173 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/leqwin/monloader/internal/queue"
+)
+
+// maxWaitSeconds caps the synchronous enqueue wait so a caller can never pin a
+// worker indefinitely.
+const maxWaitSeconds = 60
+
+type enqueueRequest struct {
+	URL     string `json:"url"`
+	Options *struct {
+		Gallery  string `json:"gallery"`
+		Folder   string `json:"folder"`
+		MaxItems int    `json:"max_items"`
+	} `json:"options"`
+}
+
+// enqueue handles POST /api/v1/queue. Downloads are asynchronous, so it
+// returns 202 with a job id; with ?wait=N it blocks up to N seconds and
+// returns the resolved job inline if it finished in time.
+func (h *Handler) enqueue(w http.ResponseWriter, r *http.Request) {
+	var body enqueueRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		apiError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+	if body.URL == "" {
+		apiError(w, http.StatusBadRequest, "invalid_request", "url is required")
+		return
+	}
+
+	opts := queue.Options{}
+	if body.Options != nil {
+		opts.Gallery = body.Options.Gallery
+		opts.Folder = body.Options.Folder
+		// A zero max_items is indistinguishable from omitted, so it means "no
+		// override"; a negative value is a mistake.
+		if body.Options.MaxItems < 0 {
+			apiError(w, http.StatusBadRequest, "invalid_request", "max_items must not be negative")
+			return
+		}
+		opts.MaxItems = body.Options.MaxItems
+	}
+
+	wait := waitSeconds(r)
+	if wait > 0 {
+		// A wait request jumps ahead of bulk jobs so it stays responsive under one
+		// worker. A job's size is not known until it resolves, so any wait takes
+		// the priority lane, not only the extension's single-image case; a bulk
+		// wait shares it but usually exceeds the timeout and falls back to polling.
+		opts.Priority = true
+	}
+
+	id := h.queue.Enqueue(body.URL, opts)
+
+	if wait > 0 {
+		ctx, cancel := context.WithTimeout(r.Context(), time.Duration(wait)*time.Second)
+		defer cancel()
+		if job, err := h.queue.Wait(ctx, id); err == nil {
+			writeJSON(w, http.StatusOK, job)
+			return
+		}
+		// Timed out: fall through to the async response so the caller polls.
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"job_id": id})
+}
+
+// waitSeconds reads and clamps the ?wait= parameter.
+func waitSeconds(r *http.Request) int {
+	v := r.URL.Query().Get("wait")
+	if v == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return 0
+	}
+	if n > maxWaitSeconds {
+		n = maxWaitSeconds
+	}
+	return n
+}
+
+// listJobs handles GET /api/v1/queue with optional status filter and
+// pagination.
+func (h *Handler) listJobs(w http.ResponseWriter, r *http.Request) {
+	page, limit := parsePage(r, 50, 200)
+	jobs, total := h.queue.List(queue.ListOptions{
+		Status: queue.JobStatus(r.URL.Query().Get("status")),
+		Limit:  limit,
+		Page:   page,
+	})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"page":  page,
+		"limit": limit,
+		"total": total,
+		"jobs":  jobs,
+	})
+}
+
+// getJob handles GET /api/v1/queue/{id}.
+func (h *Handler) getJob(w http.ResponseWriter, r *http.Request) {
+	id, ok := apiPathInt64(w, r, "id")
+	if !ok {
+		return
+	}
+	job, err := h.queue.Get(id)
+	if err != nil {
+		apiError(w, http.StatusNotFound, "not_found", "job not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, job)
+}
+
+// retryJob handles POST /api/v1/queue/{id}/retry. With ?force=1 the re-run
+// bypasses the download-archive so already-fetched posts are downloaded again.
+func (h *Handler) retryJob(w http.ResponseWriter, r *http.Request) {
+	id, ok := apiPathInt64(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := h.queue.Retry(id, r.URL.Query().Get("force") == "1"); err != nil {
+		if errors.Is(err, queue.ErrNotFound) {
+			apiError(w, http.StatusNotFound, "not_found", "job not found")
+			return
+		}
+		apiError(w, http.StatusConflict, "conflict", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"job_id": id})
+}
+
+// continueJob handles POST /api/v1/queue/{id}/continue. It enqueues a follow-up
+// job for the window after a capped job's, returning the new job id.
+func (h *Handler) continueJob(w http.ResponseWriter, r *http.Request) {
+	id, ok := apiPathInt64(w, r, "id")
+	if !ok {
+		return
+	}
+	newID, err := h.queue.Continue(id)
+	if err != nil {
+		if errors.Is(err, queue.ErrNotFound) {
+			apiError(w, http.StatusNotFound, "not_found", "job not found")
+			return
+		}
+		apiError(w, http.StatusConflict, "conflict", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"job_id": newID})
+}
+
+// deleteJob handles DELETE /api/v1/queue/{id}: cancels a running job, else
+// removes it.
+func (h *Handler) deleteJob(w http.ResponseWriter, r *http.Request) {
+	id, ok := apiPathInt64(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := h.queue.Cancel(id); err != nil {
+		apiError(w, http.StatusNotFound, "not_found", "job not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

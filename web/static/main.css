@@ -1,0 +1,271 @@
+:root {
+  --bg:         #0d0d0d;
+  --bg-surface: #16161c;
+  --bg-input:   #111118;
+  --border:     #2a2a36;
+  --fg:         #c8c8c8;
+  --fg-dim:     #6a6a82;
+  --accent:     #5c6bc0;
+  --success:    #22aa44;
+  --warning:    #ffaa00;
+  --error:      #cc3333;
+
+  --cat-general:   #3d90e3;
+  --cat-character: #00aa00;
+  --cat-artist:    #cc0000;
+  --cat-copyright: #aa00aa;
+  --cat-meta:      #ffaa00;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: "JetBrains Mono", "Fira Mono", "Courier New", monospace;
+  font-size: 14px;
+  line-height: 1.5;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+button, input, select, textarea {
+  font-family: inherit;
+  font-size: inherit;
+  background: var(--bg-input);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 0;
+  padding: 4px 8px;
+}
+button { cursor: pointer; background: var(--bg-surface); }
+button:hover { border-color: var(--accent); }
+button:disabled { cursor: not-allowed; color: var(--fg-dim); }
+input:focus, select:focus, textarea:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+
+#content { flex: 1; padding: 16px; width: 100%; max-width: 1000px; margin: 0 auto; }
+#content.content-wide { max-width: 1280px; }
+
+/* Top bar (queue + settings screens) */
+#topbar {
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  padding: 0 16px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+}
+#topbar #logo { display: flex; align-items: center; gap: 8px; font-weight: bold; letter-spacing: 2px; color: var(--fg); }
+#topbar #logo span { text-transform: uppercase; }
+#topbar #logo:hover { color: var(--accent); text-decoration: none; }
+#topbar .topbar-logo { height: 30px; width: auto; object-fit: contain; }
+#topbar nav { display: flex; gap: 16px; }
+#topbar nav a.active { color: var(--accent); }
+#topbar #topbar-right { margin-left: auto; display: flex; align-items: center; gap: 16px; }
+
+/* Banner across the top of the add + queue screens when monbooru is
+   unreachable, mirroring monbooru's degraded banner. Red to match the footer's
+   "down" light; hidden until the connectivity state says unreachable. */
+.monbooru-banner {
+  background: var(--bg-input);
+  border-bottom: 1px solid var(--error);
+  color: var(--error);
+  padding: 6px 16px;
+  font-size: 13px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.monbooru-banner a { color: var(--error); text-decoration: underline; }
+
+/* Add screen: a centered search-landing launcher, no top bar. */
+#landing {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 16px;
+}
+#landing .landing-logo { height: 84px; width: auto; object-fit: contain; }
+#landing h1 {
+  font-size: 28px; letter-spacing: 4px; text-transform: uppercase; font-weight: bold;
+}
+#landing .add-form { width: 100%; max-width: 620px; }
+#landing .links { display: flex; gap: 24px; margin-top: 4px; }
+#landing .hint { color: var(--fg-dim); font-size: 12px; }
+
+/* Command bar: the search field grows, the download button sits to its right. */
+.add-row { display: flex; gap: 8px; align-items: stretch; }
+.add-row .search-input-wrap { flex: 1; }
+.add-row button { padding-left: 16px; padding-right: 16px; }
+
+/* Command bar with the leading > prompt in the accent. */
+.search-input-wrap { position: relative; width: 100%; }
+.search-input-wrap::before {
+  content: ">";
+  position: absolute;
+  left: 10px; top: 50%;
+  transform: translateY(-50%);
+  color: var(--accent);
+  font-weight: bold;
+  line-height: 1;
+  pointer-events: none;
+}
+.search-input-wrap input {
+  width: 100%;
+  padding: 8px 10px 8px 26px;
+  background: var(--bg-input);
+}
+
+/* Queue table */
+.queue-table { width: 100%; border-collapse: collapse; }
+.queue-table th, .queue-table td { border-bottom: 1px solid var(--border); padding: 5px 8px; text-align: left; vertical-align: top; }
+.queue-table th { color: var(--fg-dim); font-weight: normal; }
+.queue-url { word-break: break-all; }
+/* Each outcome count on its own line with a full word, not an X c/d/s code. */
+.queue-summary span { display: block; white-space: nowrap; }
+/* A job's items belong to the download above them, not a standalone row: drop
+   the divider between a job and its items and inset them under it with a left
+   accent so they read as nested. */
+.queue-table .job-row:has(+ .items-row) td { border-bottom: none; }
+.items-row td { border-top: none; padding-top: 0; }
+.items-row details { margin-left: 16px; border-left: 2px solid var(--accent); padding-left: 12px; }
+.items-row summary { color: var(--fg-dim); padding: 2px 0; }
+/* Lay the items across as many columns as fit so a big job does not run down
+   the page. auto-fit (not auto-fill) lets a lone item - a cbz bundle keyed
+   gallery:<id> - take the full width instead of being stranded in a narrow
+   track where its id overflows. */
+.job-items { padding: 4px 8px 8px 16px; font-size: 13px; display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 0 16px; }
+/* Wrap within the cell so a long outcome plus a monbooru link and tag-warning
+   count drops to a second line instead of spilling into the next column. */
+.item-row { display: flex; flex-wrap: wrap; gap: 0 8px; padding: 1px 0; }
+.item-num { color: var(--fg-dim); min-width: 40px; flex-shrink: 0; }
+/* The item id links to its source post; keep it muted (the prominent accent
+   link in the row stays the monbooru id), with hover-underline as the affordance. */
+.item-num a { color: inherit; }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Stack the queue-row actions in one column so retry / force download / remove
+   share a single width (flex stretches them to the widest) instead of a wide,
+   ragged row; nowrap pins that width to the longest label. Scoped to the queue
+   so the settings sites actions keep their horizontal row. */
+.queue-table .actions { flex-direction: column; }
+.queue-table .actions button { white-space: nowrap; }
+.add-bar { margin-bottom: 14px; }
+
+/* Status colors shared by job status and item outcomes. */
+.st-queued, .st-running { color: var(--accent); }
+.st-succeeded, .o-created { color: var(--success); }
+.st-partial { color: var(--warning); }
+.st-failed, .o-failed { color: var(--error); }
+.st-canceled { color: var(--fg-dim); }
+.o-duplicate, .o-skipped_archive, .o-canceled { color: var(--fg-dim); }
+.o-capped, .o-warn { color: var(--warning); }
+
+/* Settings */
+.settings-section { margin-bottom: 20px; border: 1px solid var(--border); padding: 12px; }
+/* Section save (and its companion test) buttons sit bottom-right of the form. */
+.section-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.settings-section h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); margin-bottom: 10px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+/* The sites title carries an upstream-list link pushed to the right edge. */
+.sites-title { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.sites-title-link { font-size: 12px; font-weight: normal; text-transform: none; letter-spacing: 0; white-space: nowrap; }
+/* Side-by-side sub-blocks (authentication, stats), mirroring monbooru. */
+.settings-cols { display: flex; gap: 24px; flex-wrap: wrap; }
+.settings-cols > .settings-sub { flex: 1 1 240px; min-width: 0; }
+.settings-sub { margin-bottom: 12px; }
+.settings-sub h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--fg-dim); margin-bottom: 6px; }
+.settings-subseparator { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
+/* Stats section tables. */
+.stats-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px; }
+.stats-table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+.stats-table th { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); font-weight: normal; color: var(--fg-dim); }
+.stats-table td { padding: 4px 8px; border-bottom: 1px solid var(--border); text-align: right; min-width: 7em; font-variant-numeric: tabular-nums; }
+.stats-table th.stats-d1 { padding-left: 24px; }
+@media (max-width: 900px) { .stats-cols { grid-template-columns: 1fr; } }
+.field { margin-bottom: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+/* Fixed label column so every input starts at the same x, and a uniform
+   (wider) input width so the fields line up down the section. */
+.field label { width: 170px; flex-shrink: 0; color: var(--fg-dim); }
+.field input[type=text], .field input[type=password], .field select { flex: 1; min-width: 0; max-width: 460px; }
+/* Downloads laid out two per row, each with a one-line hint, to save space. */
+.downloads-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 28px; margin-bottom: 4px; }
+.dl-field { display: grid; grid-template-columns: 165px 1fr; align-items: center; gap: 2px 8px; }
+.dl-field label { color: var(--fg-dim); }
+.dl-field input, .dl-field select { width: 100%; min-width: 0; }
+.field-hint { grid-column: 2; color: var(--fg-dim); font-size: 11px; }
+textarea { width: 100%; min-height: 80px; }
+.sites-group { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--fg-dim); margin: 14px 0 4px; }
+.sites-table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
+.sites-table th, .sites-table td { border: 1px solid var(--border); padding: 3px 6px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Fixed widths, shared by both tables so the boorus and manga columns line up.
+   The action column is sized to just hold its buttons (test/edit/reset); the
+   gallery column has no width and so takes whatever is left. */
+.sites-table th:nth-child(1), .sites-table td:nth-child(1) { width: 20%; }
+.sites-table th:nth-child(2), .sites-table td:nth-child(2) { width: 11%; }
+.sites-table th:nth-child(4), .sites-table td:nth-child(4) { width: 8%; }
+.sites-table th:nth-child(5), .sites-table td:nth-child(5) { width: 19%; }
+.sites-table th:nth-child(6), .sites-table td:nth-child(6) { width: 185px; }
+.sites-table td.site-actions { overflow: visible; }
+.badge { padding: 0 4px; border: 1px solid var(--border); font-size: 11px; }
+.badge-warn { color: var(--warning); border-color: var(--warning); }
+/* Settings edit pop-in (monbooru's <dialog> pattern). Pin it to the viewport
+   center; without explicit positioning the modal renders in the top-left. */
+dialog {
+  background: var(--bg-surface);
+  color: var(--fg);
+  border: 1px solid var(--accent);
+  padding: 16px;
+  min-width: 360px;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  margin: 0;
+}
+dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
+dialog p { margin-bottom: 10px; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+
+.flash { padding: 4px 8px; margin: 6px 0; border: 1px solid; }
+.flash-ok { color: var(--success); border-color: var(--success); }
+.flash-err { color: var(--error); border-color: var(--error); }
+/* Amber for an actionable site state (needs a credential) - distinct from a
+   hard red failure and the green ok. */
+.flash-warn { color: var(--warning); border-color: var(--warning); }
+/* "last reached" note in the sites state column: muted, secondary to the
+   colored test result it sits beside. */
+.site-last { color: var(--fg-dim); font-size: 12px; }
+
+/* Footer with the monbooru connectivity light. */
+#footer {
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border);
+  padding: 4px 16px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.conn-light { display: inline-flex; align-items: center; gap: 6px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.dot-ok { background: var(--success); }
+.dot-checking { background: var(--warning); }
+.dot-rejected { background: var(--warning); }
+.dot-down { background: var(--error); }
+
+/* Login: monbooru's centered card, in monloader's palette. */
+.login-wrap { display: flex; justify-content: center; align-items: center; height: 100vh; background: var(--bg); }
+.login-box { width: 320px; background: var(--bg-surface); border: 1px solid var(--border); padding: 32px; }
+.login-box h1 { margin-bottom: 24px; font-size: 18px; letter-spacing: 2px; text-transform: uppercase; }
+.login-box input { width: 100%; margin-bottom: 12px; }
+.login-box button { width: 100%; padding: 8px; }
+.login-error { color: var(--error); font-size: 12px; margin-bottom: 12px; }

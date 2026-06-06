@@ -1,0 +1,27 @@
+{{define "queue"}}{{template "doc_head" .}}
+{{template "topbar" .}}
+{{template "monbooru_banner" .}}
+<main id="content" class="content-wide">
+  <form class="add-bar" hx-post="/" hx-target="#add-flash" hx-swap="innerHTML">
+    <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+    <div class="add-row">
+      <div class="search-input-wrap">
+        <input type="text" name="url" autocomplete="off" class="needs-monbooru"{{if not .MonbooruConfigured}} disabled{{end}} placeholder="add a url">
+      </div>
+      <button type="submit" class="needs-monbooru"{{if not .MonbooruConfigured}} disabled{{end}}>download</button>
+      <button type="button" hx-post="/queue/clear" hx-target="#queue-rows" hx-swap="innerHTML"
+              hx-headers='{"X-CSRF-Token":"{{.CSRFToken}}"}' hx-confirm="clear recent history?">clear</button>
+    </div>
+  </form>
+  <div id="add-flash" class="hint"></div>
+  <table class="queue-table">
+    <thead>
+      <tr><th>status</th><th>url</th><th>site</th><th>gallery</th><th>summary</th><th></th></tr>
+    </thead>
+    <tbody id="queue-rows" hx-get="/internal/queue-rows" hx-trigger="load, every 2s" hx-swap="innerHTML">
+      {{template "queue_rows" .}}
+    </tbody>
+  </table>
+</main>
+{{template "footer" .}}
+{{template "doc_foot" .}}{{end}}
