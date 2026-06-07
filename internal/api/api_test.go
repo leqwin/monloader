@@ -20,8 +20,10 @@ import (
 // fakeRunner satisfies gdl.Runner for the probe and version paths.
 type fakeRunner struct{ probe gdl.ProbeResult }
 
-func (f fakeRunner) Resolve(context.Context, string, string) ([]gdl.Item, error) { return nil, nil }
-func (f fakeRunner) Download(context.Context, string, string, string, bool, func(int, gdl.Downloaded)) ([]gdl.Downloaded, error) {
+func (f fakeRunner) Resolve(context.Context, string, string, bool) (gdl.ResolveResult, error) {
+	return gdl.ResolveResult{}, nil
+}
+func (f fakeRunner) Download(context.Context, string, string, string, bool, func(int, gdl.Downloaded), bool) ([]gdl.Downloaded, error) {
 	return nil, nil
 }
 func (f fakeRunner) ListExtractors(context.Context) ([]gdl.Extractor, error) { return nil, nil }
@@ -83,8 +85,8 @@ func newTestServer(t *testing.T, token string) *httptest.Server {
 		t.Fatal(err)
 	}
 	extractors := []gdl.Extractor{
-		{Category: "danbooru", Subcategory: "post", Example: "https://danbooru.donmai.us/posts/1"},
-		{Category: "gelbooru", Subcategory: "post", Example: "https://gelbooru.com/index.php?id=1"},
+		{Category: "danbooru", Subcategory: "post", Example: "https://example.com/posts/1"},
+		{Category: "gelbooru", Subcategory: "post", Example: "https://example.com/index.php?id=1"},
 		{Category: "weirdsite", Subcategory: "post", Example: "https://weird.example/1"},
 	}
 	h := New(q, fakeRunner{probe: gdl.ProbeResult{Status: gdl.ProbeOK}}, mapper, config.NewProvider(cfg), extractors, "v1.2.3", "1.32.1")

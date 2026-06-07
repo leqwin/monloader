@@ -33,6 +33,21 @@ type fakeRunner struct {
 	writeIdx   []int
 	dlErr      error
 	ext        string
+	// extByIdx overrides the written file's extension per resolved index, modeling
+	// a page that mixes media types (an image plus an audio clip); unset falls back
+	// to ext.
+	extByIdx map[int]string
+	// queue, category, and deepItems model a dispatcher URL: the shallow -j pass
+	// returns queue handoffs under category; a deep -J re-resolve returns
+	// deepItems (the leaf files), which the download then writes.
+	queue          []gdl.QueueItem
+	category       string
+	deepItems      []gdl.Item
+	gotResolveDeep bool
+	// chapterPages models a manga title's per-chapter import: a resolve or
+	// download of a chapter URL (a Queue handoff) returns/writes that chapter's
+	// pages, keyed by the chapter URL.
+	chapterPages map[string][]gdl.Item
 	// shortStream, when >0, ends the download stream after that many entries,
 	// modeling a mid-batch failure that prints fewer lines than were resolved.
 	shortStream int
@@ -52,20 +67,54 @@ type fakeRunner struct {
 	gotRange string // records the rng arg of the last Resolve call
 }
 
-func (f *fakeRunner) Resolve(ctx context.Context, url, rng string) ([]gdl.Item, error) {
+func (f *fakeRunner) Resolve(ctx context.Context, url, rng string, deep bool) (gdl.ResolveResult, error) {
+	if deep {
+		f.gotResolveDeep = true
+		return gdl.ResolveResult{Items: capItems(f.deepItems, rng), Category: f.category}, nil
+	}
+	if pages, ok := f.chapterPages[url]; ok {
+		return gdl.ResolveResult{Items: pages}, nil
+	}
 	f.gotRange = rng
 	if f.resolveErr != nil {
-		return nil, f.resolveErr
+		return gdl.ResolveResult{}, f.resolveErr
 	}
-	return capItems(f.resolved, rng), nil
+	cat := f.category
+	if cat == "" && len(f.resolved) > 0 {
+		cat = f.resolved[0].Category
+	}
+	return gdl.ResolveResult{Items: capItems(f.resolved, rng), Queue: f.queue, Category: cat}, nil
 }
 
-func (f *fakeRunner) Download(ctx context.Context, url, rng, workDir string, force bool, onFile func(int, gdl.Downloaded)) ([]gdl.Downloaded, error) {
+func (f *fakeRunner) Download(ctx context.Context, url, rng, workDir string, force bool, onFile func(int, gdl.Downloaded), deep bool) ([]gdl.Downloaded, error) {
 	f.gotForce = force
+	// The real Download creates its work dir; honor that so callers that do not
+	// pre-make it (per-chapter import) write into an existing dir.
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		return nil, err
+	}
+	if pages, ok := f.chapterPages[url]; ok {
+		out := make([]gdl.Downloaded, len(pages))
+		for i, it := range pages {
+			name := it.ID + "-" + strconv.Itoa(it.Num)
+			path := filepath.Join(workDir, name+".jpg")
+			if err := os.WriteFile(path, []byte("bytes-"+name), 0o644); err != nil {
+				return nil, err
+			}
+			out[i] = gdl.Downloaded{Path: path, Meta: it.Meta}
+		}
+		return out, nil
+	}
+	// A deep download follows the dispatcher's handoffs, so its files are the
+	// deep-resolve leaves, not the shallow resolved list.
+	src := f.resolved
+	if deep {
+		src = f.deepItems
+	}
 	if f.blockDownload {
 		for _, i := range f.liveIdx {
 			if onFile != nil {
-				it := f.resolved[i]
+				it := src[i]
 				onFile(i, gdl.Downloaded{Meta: it.Meta})
 			}
 		}
@@ -86,7 +135,7 @@ func (f *fakeRunner) Download(ctx context.Context, url, rng, workDir string, for
 	// One result per resolved item in source order: a written file or an archive
 	// skip, as the real download reports them; the range bounds the set, as the
 	// real download honors --range.
-	items := capItems(f.resolved, rng)
+	items := capItems(src, rng)
 	out := make([]gdl.Downloaded, len(items))
 	for i, it := range items {
 		if f.shortStream > 0 && i >= f.shortStream {
@@ -102,7 +151,11 @@ func (f *fakeRunner) Download(ctx context.Context, url, rng, workDir string, for
 		if it.Num > 0 {
 			name = it.ID + "-" + strconv.Itoa(it.Num)
 		}
-		path := filepath.Join(workDir, name+ext)
+		fileExt := ext
+		if e, ok := f.extByIdx[i]; ok {
+			fileExt = e
+		}
+		path := filepath.Join(workDir, name+fileExt)
 		if err := os.WriteFile(path, []byte("bytes-"+name), 0o644); err != nil {
 			return nil, err
 		}
@@ -313,6 +366,56 @@ func TestPipelineMixedOutcomes(t *testing.T) {
 	}
 }
 
+// articleAsset models one media file from a non-booru page (a wiki article),
+// the shape that mixes an image with a file monbooru cannot ingest.
+func articleAsset(id string) gdl.Item {
+	return gdl.Item{
+		Category: "fandom-touhou", Subcategory: "article", ID: id,
+		Meta: map[string]any{
+			"category": "fandom-touhou", "subcategory": "article", "id": id,
+			"tags": []any{"x"},
+		},
+	}
+}
+
+func TestPipelineSkipsUnsupportedMedia(t *testing.T) {
+	// A wiki/article page returns mixed media: an image monbooru ingests and an
+	// audio clip it cannot. The audio is skipped, not failed, so the job that
+	// imported the image still succeeds rather than reading partial.
+	fake := &fakeRunner{
+		resolved: []gdl.Item{articleAsset("image"), articleAsset("audio")},
+		writeIdx: []int{0, 1},
+		extByIdx: map[int]string{1: ".ogg"}, // index 0 keeps the default .jpg
+	}
+	var pushes int
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		pushes++
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": pushes})
+	}
+	q, cleanup := testEnv(t, fake, handler)
+	defer cleanup()
+
+	job := waitJob(t, q, q.Enqueue("https://example.com/wiki/some-article", queue.Options{}))
+
+	if job.Status != queue.JobSucceeded {
+		t.Errorf("status = %s, want succeeded (an unsupported file is skipped, not failed)", job.Status)
+	}
+	want := queue.Summary{Created: 1, Skipped: 1, Total: 2}
+	if job.Summary != want {
+		t.Errorf("summary = %+v, want %+v", job.Summary, want)
+	}
+	if job.Items[0].Outcome != queue.OutcomeCreated {
+		t.Errorf("image outcome = %s, want created", job.Items[0].Outcome)
+	}
+	if job.Items[1].Outcome != queue.OutcomeSkippedUnsupported {
+		t.Errorf("audio outcome = %s, want skipped_unsupported", job.Items[1].Outcome)
+	}
+	if pushes != 1 {
+		t.Errorf("pushed %d files, want 1 (the audio is not pushed)", pushes)
+	}
+}
+
 func TestPipelinePartialDownloadStream(t *testing.T) {
 	// A mid-stream download error truncates gallery-dl's output to fewer lines
 	// than the resolve list. The written files still push; the unwritten tail is
@@ -390,7 +493,7 @@ func TestPipelineMultiImagePostKeepsEveryImage(t *testing.T) {
 	q, cleanup := testEnv(t, fake, handler)
 	defer cleanup()
 
-	job := waitJob(t, q, q.Enqueue("https://www.artstation.com/artwork/2x3LaB", queue.Options{}))
+	job := waitJob(t, q, q.Enqueue("https://example.com/artwork/2x3LaB", queue.Options{}))
 	if job.Status != queue.JobSucceeded || job.Summary.Created != 3 {
 		t.Fatalf("status=%s created=%d, want succeeded/3 (one per asset)", job.Status, job.Summary.Created)
 	}
@@ -420,7 +523,7 @@ func TestPipelineGenericSourceUsesSubmittedURL(t *testing.T) {
 	q, cleanup := testEnv(t, fake, handler)
 	defer cleanup()
 
-	submitted := "https://desuarchive.org/a/thread/288484266/"
+	submitted := "https://example.com/a/thread/288484266/"
 	job := waitJob(t, q, q.Enqueue(submitted, queue.Options{}))
 	if job.Status != queue.JobSucceeded {
 		t.Fatalf("status = %s, want succeeded", job.Status)
@@ -516,6 +619,110 @@ func TestPipelineEmptyResolveSucceeds(t *testing.T) {
 	}
 }
 
+func forumLeaf(id string) gdl.Item {
+	return gdl.Item{
+		Category: "imgur", Subcategory: "image", ID: id,
+		Meta: map[string]any{"category": "imgur", "subcategory": "image", "id": id, "tags": []any{"x"}},
+	}
+}
+
+func TestPipelineForumDispatchLoose(t *testing.T) {
+	// A forum thread whose inline images are externally hosted resolves to
+	// Message.Queue handoffs, not files. The pipeline re-resolves deep (-J) and
+	// pushes the leaves as loose items instead of reporting "no posts matched".
+	fake := &fakeRunner{
+		queue:     []gdl.QueueItem{{URL: "https://img.example.com/1.jpg"}, {URL: "https://img.example.com/2.jpg"}},
+		category:  "bellazon",
+		deepItems: []gdl.Item{forumLeaf("1"), forumLeaf("2")},
+		writeIdx:  []int{0, 1},
+	}
+	var pushes int
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		pushes++
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": pushes})
+	}
+	q, cleanup := testEnv(t, fake, handler)
+	defer cleanup()
+
+	job := waitJob(t, q, q.Enqueue("https://example.com/main/topic/1132-tennis/", queue.Options{}))
+
+	if job.Status != queue.JobSucceeded || job.Summary.Created != 2 {
+		t.Fatalf("status=%s created=%d, want succeeded/2 (the inline images)", job.Status, job.Summary.Created)
+	}
+	if !fake.gotResolveDeep {
+		t.Error("a Queue-only resolve should trigger a deep -J re-resolve")
+	}
+	if pushes != 2 {
+		t.Errorf("pushed %d files, want 2", pushes)
+	}
+	// The job's site is the dispatcher (the forum), not the leaf image host.
+	if job.Site != "bellazon" {
+		t.Errorf("site = %q, want bellazon (the dispatcher, not the leaf host)", job.Site)
+	}
+}
+
+func mangaChapterPage(chID string, num int) gdl.Item {
+	return gdl.Item{
+		Category: "mangadex", Subcategory: "chapter", ID: chID, Num: num,
+		Meta: map[string]any{"category": "mangadex", "subcategory": "chapter",
+			"id": chID, "num": float64(num), "title": "Chapter", "tags": []any{"x"}},
+	}
+}
+
+func TestPipelineMangaTitleExpandsToChapters(t *testing.T) {
+	// A manga/comic title (series) resolves to Message.Queue chapters; each is
+	// imported as its own cbz and pushed as its own manga, rather than failing or
+	// bundling every chapter into one scrambled archive.
+	ch1, ch2 := "https://example.com/chapter/aaa", "https://example.com/chapter/bbb"
+	fake := &fakeRunner{
+		queue:    []gdl.QueueItem{{URL: ch1}, {URL: ch2}},
+		category: "mangadex",
+		chapterPages: map[string][]gdl.Item{
+			ch1: {mangaChapterPage("aaa", 1), mangaChapterPage("aaa", 2)},
+			ch2: {mangaChapterPage("bbb", 1), mangaChapterPage("bbb", 2)},
+		},
+	}
+	var cbzCount int
+	var entries []int
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseMultipartForm(32 << 20)
+		f, fh, _ := r.FormFile("file")
+		if !strings.HasSuffix(fh.Filename, ".cbz") {
+			t.Errorf("filename = %q, want a .cbz", fh.Filename)
+		}
+		data, _ := io.ReadAll(f)
+		if zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data))); err == nil {
+			entries = append(entries, len(zr.File))
+		}
+		cbzCount++
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": cbzCount})
+	}
+	q, cleanup := testEnv(t, fake, handler)
+	defer cleanup()
+
+	job := waitJob(t, q, q.Enqueue("https://example.com/title/abc", queue.Options{}))
+
+	if job.Status != queue.JobSucceeded || job.Summary.Created != 2 {
+		t.Fatalf("status=%s created=%d, want succeeded/2 (one cbz per chapter)", job.Status, job.Summary.Created)
+	}
+	if len(job.Items) != 2 {
+		t.Fatalf("want 2 chapter items, got %d", len(job.Items))
+	}
+	if cbzCount != 2 {
+		t.Errorf("pushed %d cbz, want 2 (one per chapter)", cbzCount)
+	}
+	for _, e := range entries {
+		if e != 2 {
+			t.Errorf("a chapter cbz had %d pages, want 2", e)
+		}
+	}
+	if job.Site != "mangadex" {
+		t.Errorf("site = %q, want mangadex", job.Site)
+	}
+}
+
 // TestPipelineForcedRetryPassesForce checks that a forced retry reaches the
 // download pass as force=true, while the initial run does not.
 func TestPipelineForcedRetryPassesForce(t *testing.T) {
@@ -599,7 +806,7 @@ func TestPipelineMangaGalleryBundlesAllPages(t *testing.T) {
 	defer cleanup()
 
 	// nhentai is kind=manga, so a gallery URL bundles into one cbz by default.
-	id := q.Enqueue("https://nhentai.net/g/654738/", queue.Options{})
+	id := q.Enqueue("https://example.com/g/654738/", queue.Options{})
 	job := waitJob(t, q, id)
 
 	if job.Status != queue.JobSucceeded {
@@ -647,7 +854,7 @@ func TestPipelineMangaExemptFromCap(t *testing.T) {
 	defer cleanup()
 
 	// max_items=2 caps the first resolve at 2 of the 3 pages.
-	job := waitJob(t, q, q.Enqueue("https://nhentai.net/g/654738/", queue.Options{MaxItems: 2}))
+	job := waitJob(t, q, q.Enqueue("https://example.com/g/654738/", queue.Options{MaxItems: 2}))
 
 	if job.Status != queue.JobSucceeded || job.Capped {
 		t.Errorf("status=%s capped=%v, want succeeded/false (a book is fetched whole)", job.Status, job.Capped)
@@ -676,7 +883,7 @@ func TestPipelineMangaIncompleteFails(t *testing.T) {
 	q, cleanup := testEnv(t, fake, handler)
 	defer cleanup()
 
-	job := waitJob(t, q, q.Enqueue("https://nhentai.net/g/654738/", queue.Options{}))
+	job := waitJob(t, q, q.Enqueue("https://example.com/g/654738/", queue.Options{}))
 
 	if job.Status != queue.JobFailed {
 		t.Errorf("status = %s, want failed (incomplete book not pushed)", job.Status)
@@ -748,7 +955,7 @@ func TestPipelineMoebooruPool(t *testing.T) {
 	q, cleanup := testEnv(t, fake, handler)
 	defer cleanup()
 
-	id := q.Enqueue("https://yande.re/pool/show/12", queue.Options{})
+	id := q.Enqueue("https://example.com/pool/show/12", queue.Options{})
 	job := waitJob(t, q, id)
 
 	if job.Status != queue.JobSucceeded || job.Summary.Created != 3 {
@@ -809,6 +1016,26 @@ func TestBundleKey(t *testing.T) {
 	}
 	if got := bundleKey(nil); got != "gallery" {
 		t.Errorf("empty key = %q, want gallery", got)
+	}
+}
+
+func TestChapterItemsLabelsBySlugWithoutID(t *testing.T) {
+	// A chapter whose metadata carries no id is labeled by its URL slug, not the
+	// whole URL, so the queue row stays short; one with an id keeps chapter:<id>.
+	chapters := []gdl.QueueItem{
+		{URL: "https://example.com/comic/a-title/1-first-chapter/"},
+		{URL: "https://example.com/comic/a-title/2-second-chapter/", Meta: map[string]any{"id": "abc"}},
+	}
+	items := chapterItems(chapters)
+	if items[0].PostID != "1-first-chapter" {
+		t.Errorf("no-id chapter post_id = %q, want the slug 1-first-chapter", items[0].PostID)
+	}
+	if items[1].PostID != "chapter:abc" {
+		t.Errorf("id chapter post_id = %q, want chapter:abc", items[1].PostID)
+	}
+	// The row still links to the chapter URL.
+	if items[0].URL != chapters[0].URL {
+		t.Errorf("chapter link = %q, want the chapter URL", items[0].URL)
 	}
 }
 

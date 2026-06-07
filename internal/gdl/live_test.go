@@ -50,7 +50,7 @@ func TestLiveListExtractors(t *testing.T) {
 func TestLiveResolveUnsupportedURL(t *testing.T) {
 	// A URL no extractor matches exits non-zero offline; the wrapper must turn
 	// that into the stable unsupported-URL code.
-	_, err := liveTool(t).Resolve(context.Background(), "http://nope", "")
+	_, err := liveTool(t).Resolve(context.Background(), "http://nope", "", false)
 	var ge *queue.CodedError
 	if e, ok := err.(*queue.CodedError); ok {
 		ge = e
@@ -64,10 +64,11 @@ func TestLiveResolve(t *testing.T) {
 	tool := liveTool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	items, err := tool.Resolve(ctx, danbooruURL, "1-1")
+	res, err := tool.Resolve(ctx, danbooruURL, "1-1", false)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
+	items := res.Items
 	if len(items) == 0 {
 		t.Fatal("expected at least one resolved item")
 	}
@@ -100,7 +101,7 @@ func TestLiveDownload(t *testing.T) {
 	var streamed []Downloaded
 	downloaded, err := tool.Download(ctx, danbooruURL, "1-1", filepath.Join(dir, "work"), false, func(_ int, d Downloaded) {
 		streamed = append(streamed, d)
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("Download: %v", err)
 	}

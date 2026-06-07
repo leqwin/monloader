@@ -28,6 +28,25 @@ type Item struct {
 	Meta        map[string]any
 }
 
+// QueueItem is one Message.Queue handoff from a -j pass: a child URL a
+// dispatcher (a forum thread, a manga title, an archive board) delegates to,
+// with the kwdict the parent stamped on it. A plain -j lists these without
+// following them; a deep -J pass recurses into them instead.
+type QueueItem struct {
+	URL  string
+	Meta map[string]any
+}
+
+// ResolveResult is a -j pass: the downloadable Url items, any Queue handoffs (a
+// dispatcher delegating to child extractors), and the top-level category. In
+// practice a URL yields one or the other - a booru search yields Items, a forum
+// thread or manga title yields Queue - so the pipeline routes on which is set.
+type ResolveResult struct {
+	Items    []Item
+	Queue    []QueueItem
+	Category string
+}
+
 // Downloaded is one entry from the download pass, in source order: a written
 // file paired with its parsed .json sidecar metadata, or an archive skip
 // (Skipped set, no file).
@@ -63,8 +82,8 @@ type ProbeResult struct {
 // Runner is the gallery-dl surface the rest of the app depends on. The real
 // implementation shells out; tests inject a fake.
 type Runner interface {
-	Resolve(ctx context.Context, url, rng string) ([]Item, error)
-	Download(ctx context.Context, url, rng, workDir string, force bool, onFile func(int, Downloaded)) ([]Downloaded, error)
+	Resolve(ctx context.Context, url, rng string, deep bool) (ResolveResult, error)
+	Download(ctx context.Context, url, rng, workDir string, force bool, onFile func(int, Downloaded), deep bool) ([]Downloaded, error)
 	ListExtractors(ctx context.Context) ([]Extractor, error)
 	Probe(ctx context.Context, exampleURL string) (ProbeResult, error)
 	Version(ctx context.Context) string
@@ -135,9 +154,15 @@ func (t *Tool) configArgs() []string {
 	return []string{"-c", p}
 }
 
-func rangeArgs(rng string) []string {
+// rangeArgs builds the gallery-dl range flag for a window. A deep (dispatcher)
+// pass bounds the number of queued children with --chapter-range; a normal pass
+// bounds the files with --range.
+func rangeArgs(rng string, deep bool) []string {
 	if rng == "" {
 		return nil
+	}
+	if deep {
+		return []string{"--chapter-range", rng}
 	}
 	return []string{"--range", rng}
 }
@@ -162,9 +187,9 @@ func noTagsArgs(sites []string) []string {
 // flags: the destination, optional range, and the URL. force adds `-o archive=`,
 // an empty (falsy) value that makes gallery-dl open no archive at all, so it
 // neither skips already-recorded posts nor writes the archive file.archive.
-func downloadArgs(workDir, rng, url string, force bool) []string {
+func downloadArgs(workDir, rng, url string, force, deep bool) []string {
 	args := []string{"-D", workDir}
-	args = append(args, rangeArgs(rng)...)
+	args = append(args, rangeArgs(rng, deep)...)
 	if force {
 		args = append(args, "-o", "archive=")
 	}
@@ -174,16 +199,22 @@ func downloadArgs(workDir, rng, url string, force bool) []string {
 // Resolve runs `gallery-dl -j [--range] <url>` and parses the authoritative
 // item list. It turns `tags: true` off for the flat-tag families (see
 // noTagsArgs), whose per-post tag fetch is wasted on this pass. A non-zero exit
-// becomes a coded error so the pipeline can attribute the failure.
-func (t *Tool) Resolve(ctx context.Context, url, rng string) ([]Item, error) {
+// becomes a coded error so the pipeline can attribute the failure. deep runs the
+// resolve-json mode (`-J`) instead, which follows Message.Queue handoffs into
+// their files; the child window is then bounded by --chapter-range, not --range.
+func (t *Tool) Resolve(ctx context.Context, url, rng string, deep bool) (ResolveResult, error) {
 	args := t.configArgs()
 	args = append(args, noTagsArgs(t.flatTagSites)...)
-	args = append(args, "-j")
-	args = append(args, rangeArgs(rng)...)
+	mode := "-j"
+	if deep {
+		mode = "-J"
+	}
+	args = append(args, mode)
+	args = append(args, rangeArgs(rng, deep)...)
 	args = append(args, url)
 	res, err := t.run(ctx, args...)
 	if err != nil {
-		return nil, &queue.CodedError{Code: queue.ErrCodeDownloadFailed, Msg: err.Error()}
+		return ResolveResult{}, &queue.CodedError{Code: queue.ErrCodeDownloadFailed, Msg: err.Error()}
 	}
 	if res.exitCode != 0 {
 		cerr := classifyError(res.exitCode, res.stderr)
@@ -191,10 +222,10 @@ func (t *Tool) Resolve(ctx context.Context, url, rng string) ([]Item, error) {
 		// unsupported; resolve it as a directlink instead (see directfetch.go).
 		if cerr.Code == queue.ErrCodeUnsupportedURL {
 			if items, ok := directlinkResolve(ctx, url); ok {
-				return items, nil
+				return ResolveResult{Items: items}, nil
 			}
 		}
-		return nil, cerr
+		return ResolveResult{}, cerr
 	}
 	return parseResolve(res.stdout)
 }
@@ -203,12 +234,14 @@ func (t *Tool) Resolve(ctx context.Context, url, rng string) ([]Item, error) {
 // it wrote, each paired with its `.json` sidecar metadata. force bypasses the
 // download-archive so already-fetched posts are written again. onFile, when set,
 // is called for each file as gallery-dl prints it, so the caller can advance
-// items live instead of waiting for the whole download.
-func (t *Tool) Download(ctx context.Context, url, rng, workDir string, force bool, onFile func(int, Downloaded)) ([]Downloaded, error) {
+// items live instead of waiting for the whole download. deep bounds a
+// dispatcher's queued children with --chapter-range to match a deep resolve; the
+// download always follows Message.Queue handoffs regardless.
+func (t *Tool) Download(ctx context.Context, url, rng, workDir string, force bool, onFile func(int, Downloaded), deep bool) ([]Downloaded, error) {
 	if err := os.MkdirAll(workDir, 0o755); err != nil {
 		return nil, &queue.CodedError{Code: queue.ErrCodeDownloadFailed, Msg: err.Error()}
 	}
-	args := append(t.configArgs(), downloadArgs(workDir, rng, url, force)...)
+	args := append(t.configArgs(), downloadArgs(workDir, rng, url, force, deep)...)
 	cmd := exec.CommandContext(ctx, t.cfg.GalleryDL.BinaryPath, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -285,20 +318,21 @@ func (t *Tool) Version(ctx context.Context) string {
 }
 
 // parseResolve decodes gallery-dl's -j output: a JSON array of message
-// tuples. Url messages (type 3) carry `[3, file_url, kwdict]`; directory
-// messages (type 2) and others are skipped. An extraction error is reported
-// as `[-1, {error, message}]` while gallery-dl still exits 0, so it is captured
-// and surfaced when nothing resolved.
-func parseResolve(data []byte) ([]Item, error) {
+// tuples. Url messages (type 3) carry `[3, file_url, kwdict]` and become items;
+// Queue messages (type 6) carry `[6, child_url, kwdict]` and become handoffs a
+// dispatcher delegates to; directory messages (type 2) and others are skipped.
+// An extraction error is reported as `[-1, {error, message}]` while gallery-dl
+// still exits 0, so it is captured and surfaced when nothing resolved.
+func parseResolve(data []byte) (ResolveResult, error) {
 	data = bytes.TrimSpace(data)
 	if len(data) == 0 {
-		return nil, nil
+		return ResolveResult{}, nil
 	}
 	var msgs []json.RawMessage
 	if err := json.Unmarshal(data, &msgs); err != nil {
-		return nil, fmt.Errorf("parsing gallery-dl -j output: %w", err)
+		return ResolveResult{}, fmt.Errorf("parsing gallery-dl -j output: %w", err)
 	}
-	items := make([]Item, 0, len(msgs))
+	var res ResolveResult
 	var gdlErr *queue.CodedError
 	for _, raw := range msgs {
 		var parts []json.RawMessage
@@ -315,6 +349,17 @@ func parseResolve(data []byte) ([]Item, error) {
 			}
 			continue
 		}
+		if mtype == 6 { // [6, child_url, kwdict]: a dispatcher handoff
+			var url string
+			var meta map[string]any
+			_ = json.Unmarshal(parts[1], &url)
+			if len(parts) >= 3 {
+				_ = json.Unmarshal(parts[2], &meta)
+			}
+			res.setCategory(meta)
+			res.Queue = append(res.Queue, QueueItem{URL: url, Meta: meta})
+			continue
+		}
 		if mtype != 3 { // only Message.Url carries a downloadable file
 			continue
 		}
@@ -328,14 +373,23 @@ func parseResolve(data []byte) ([]Item, error) {
 		if meta == nil {
 			continue
 		}
-		items = append(items, itemFromMeta(meta))
+		res.setCategory(meta)
+		res.Items = append(res.Items, itemFromMeta(meta))
 	}
-	// A resolve that yielded no items but reported an error (zero exit) would
+	// A resolve that yielded nothing but reported an error (zero exit) would
 	// otherwise look like a clean empty success; fail it instead.
-	if len(items) == 0 && gdlErr != nil {
-		return nil, gdlErr
+	if len(res.Items) == 0 && len(res.Queue) == 0 && gdlErr != nil {
+		return ResolveResult{}, gdlErr
 	}
-	return items, nil
+	return res, nil
+}
+
+// setCategory records the top-level extractor category from the first message
+// that carries one (every message's kwdict is stamped with it).
+func (r *ResolveResult) setCategory(meta map[string]any) {
+	if r.Category == "" {
+		r.Category = kwdict.String(meta, "category")
+	}
 }
 
 // resolveError classifies a gallery-dl -j error object `{error, message}` into

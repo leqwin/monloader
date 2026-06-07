@@ -58,7 +58,7 @@ func TestPushImageCreatedBareBody(t *testing.T) {
 		Filename:        "post.jpg",
 		Tags:            []string{"1girl", "artist:x", "rating:general"},
 		Source:          "danbooru",
-		URL:             "https://danbooru.donmai.us/posts/1",
+		URL:             "https://example.com/posts/1",
 		Collection:      "pool name",
 		CollectionOrder: 2,
 		Via:             "monloader",
@@ -83,7 +83,7 @@ func TestPushImageCreatedBareBody(t *testing.T) {
 	if gotAuth != "Bearer tok" {
 		t.Errorf("auth = %q, want Bearer tok", gotAuth)
 	}
-	if gotVia != "monloader" || gotSource != "danbooru" || gotURL != "https://danbooru.donmai.us/posts/1" {
+	if gotVia != "monloader" || gotSource != "danbooru" || gotURL != "https://example.com/posts/1" {
 		t.Errorf("provenance fields wrong: via=%q source=%q url=%q", gotVia, gotSource, gotURL)
 	}
 	if gotCollection != "pool name" || gotOrder != "2" {

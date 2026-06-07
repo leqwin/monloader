@@ -26,8 +26,10 @@ import (
 // to drive testSite down its auth/blocked/failed branches.
 type fakeRunner struct{ probe gdl.ProbeResult }
 
-func (fakeRunner) Resolve(context.Context, string, string) ([]gdl.Item, error) { return nil, nil }
-func (fakeRunner) Download(context.Context, string, string, string, bool, func(int, gdl.Downloaded)) ([]gdl.Downloaded, error) {
+func (fakeRunner) Resolve(context.Context, string, string, bool) (gdl.ResolveResult, error) {
+	return gdl.ResolveResult{}, nil
+}
+func (fakeRunner) Download(context.Context, string, string, string, bool, func(int, gdl.Downloaded), bool) ([]gdl.Downloaded, error) {
 	return nil, nil
 }
 func (fakeRunner) ListExtractors(context.Context) ([]gdl.Extractor, error) { return nil, nil }
@@ -75,7 +77,7 @@ func newWebServer(t *testing.T, monbooruURL, password string) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	extractors := []gdl.Extractor{{Category: "danbooru", Subcategory: "post", Example: "https://danbooru.donmai.us/posts/1"}}
+	extractors := []gdl.Extractor{{Category: "danbooru", Subcategory: "post", Example: "https://example.com/posts/1"}}
 	srv, err := NewServer(provider, filepath.Join(t.TempDir(), "monloader.toml"), q, monbooru.New(provider), fakeRunner{}, mapper, extractors, "1.32.1", sitestate.New())
 	if err != nil {
 		t.Fatal(err)
@@ -176,7 +178,7 @@ func TestEnqueueViaForm(t *testing.T) {
 
 	resp, err := http.PostForm(ts.URL+"/", url.Values{
 		"_csrf": {token},
-		"url":   {"https://danbooru.donmai.us/posts/1"},
+		"url":   {"https://example.com/posts/1"},
 	})
 	if err != nil {
 		t.Fatal(err)

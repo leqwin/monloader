@@ -138,18 +138,22 @@ input:focus, select:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .items-row td { border-top: none; padding-top: 0; }
 .items-row details { margin-left: 16px; border-left: 2px solid var(--accent); padding-left: 12px; }
 .items-row summary { color: var(--fg-dim); padding: 2px 0; }
-/* Lay the items across as many columns as fit so a big job does not run down
-   the page. auto-fit (not auto-fill) lets a lone item - a cbz bundle keyed
-   gallery:<id> - take the full width instead of being stranded in a narrow
-   track where its id overflows. */
-.job-items { padding: 4px 8px 8px 16px; font-size: 13px; display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 0 16px; }
-/* Wrap within the cell so a long outcome plus a monbooru link and tag-warning
-   count drops to a second line instead of spilling into the next column. */
-.item-row { display: flex; flex-wrap: wrap; gap: 0 8px; padding: 1px 0; }
-.item-num { color: var(--fg-dim); min-width: 40px; flex-shrink: 0; }
+/* Three items per row, each a single aligned line: source id, outcome, result
+   (monbooru id / error). item-row is display:contents so all rows share one
+   grid and the columns line up; a long id truncates to one line rather than
+   wrapping or spilling into the next item. The source keeps a small minimum so
+   it never collapses; the row falls to two then one item as the width shrinks. */
+.job-items { padding: 4px 8px 8px 16px; font-size: 13px; display: grid; grid-template-columns: repeat(3, minmax(56px, 1fr) auto auto); column-gap: 10px; row-gap: 0; align-items: baseline; }
+.item-row { display: contents; }
+/* A border on each source cell rules off the items from one another; row-gap is
+   0 so the rules run unbroken down the column. */
+.item-num { color: var(--fg-dim); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-left: 1px solid var(--border); padding: 2px 0 2px 12px; }
 /* The item id links to its source post; keep it muted (the prominent accent
    link in the row stays the monbooru id), with hover-underline as the affordance. */
 .item-num a { color: inherit; }
+.item-result { display: flex; gap: 0 6px; white-space: nowrap; }
+@media (max-width: 1100px) { .job-items { grid-template-columns: repeat(2, minmax(56px, 1fr) auto auto); } }
+@media (max-width: 680px) { .job-items { grid-template-columns: minmax(56px, 1fr) auto auto; } }
 .actions { display: flex; flex-wrap: wrap; gap: 6px; }
 /* Stack the queue-row actions in one column so retry / force download / remove
    share a single width (flex stretches them to the widest) instead of a wide,
@@ -165,7 +169,7 @@ input:focus, select:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .st-partial { color: var(--warning); }
 .st-failed, .o-failed { color: var(--error); }
 .st-canceled { color: var(--fg-dim); }
-.o-duplicate, .o-skipped_archive, .o-canceled { color: var(--fg-dim); }
+.o-duplicate, .o-skipped_archive, .o-skipped_unsupported, .o-canceled { color: var(--fg-dim); }
 .o-capped, .o-warn { color: var(--warning); }
 
 /* Settings */

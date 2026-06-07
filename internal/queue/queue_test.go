@@ -37,7 +37,7 @@ func TestItemTransitions(t *testing.T) {
 	all := []ItemStatus{ItemPending, ItemDownloaded, ItemUploaded, ItemDone, ItemSkipped, ItemFailed}
 	legal := map[ItemStatus]map[ItemStatus]bool{
 		ItemPending:    {ItemDownloaded: true, ItemSkipped: true, ItemFailed: true},
-		ItemDownloaded: {ItemUploaded: true, ItemFailed: true},
+		ItemDownloaded: {ItemUploaded: true, ItemSkipped: true, ItemFailed: true},
 		ItemUploaded:   {ItemDone: true, ItemSkipped: true, ItemFailed: true},
 	}
 	for _, from := range all {
@@ -80,6 +80,12 @@ func TestSummarizeAndDeriveStatus(t *testing.T) {
 			"duplicates and skips only succeed",
 			[]Item{{Outcome: OutcomeDuplicate}, {Outcome: OutcomeSkippedArchive}},
 			Summary{Duplicate: 1, Skipped: 1, Total: 2},
+			JobSucceeded,
+		},
+		{
+			"unsupported media skips, not fails",
+			[]Item{{Outcome: OutcomeCreated}, {Outcome: OutcomeSkippedUnsupported}},
+			Summary{Created: 1, Skipped: 1, Total: 2},
 			JobSucceeded,
 		},
 	}

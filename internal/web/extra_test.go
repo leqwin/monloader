@@ -23,7 +23,7 @@ type itemsProc struct{}
 
 func (itemsProc) Process(_ context.Context, job *queue.Job) error {
 	job.SetItems([]queue.Item{
-		{PostID: "a", Num: 1, URL: "https://danbooru.donmai.us/posts/100"},
+		{PostID: "a", Num: 1, URL: "https://example.com/posts/100"},
 		{PostID: "b", Num: 2},
 	})
 	job.UpdateItem(0, func(it *queue.Item) { it.Status = queue.ItemDownloaded })
@@ -133,7 +133,7 @@ func TestQueueRowsRendersItems(t *testing.T) {
 	_, body := get(t, ts, "/internal/queue-rows")
 	// data-job keys the <details> so the client can restore an expanded job
 	// across the 2s poll swap (it would otherwise re-collapse).
-	for _, want := range []string{"/images/5", `<a href="https://danbooru.donmai.us/posts/100"`, "o-created", "o-failed", "monbooru_rejected", "items", "data-job=", "items-row", "created</span>", "total</span>"} {
+	for _, want := range []string{"/images/5", `<a href="https://example.com/posts/100"`, "o-created", "o-failed", "monbooru_rejected", "items", "data-job=", "items-row", "created</span>", "total</span>"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("queue rows missing %q", want)
 		}

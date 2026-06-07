@@ -79,10 +79,11 @@ func mediaExtension(contentType string) (string, bool) {
 }
 
 // directlinkResolve synthesizes a directlink resolve item for a media URL
-// gallery-dl rejected as unsupported. A HEAD reveals the content type; a media
-// type yields one item whose metadata rebuilds the submitted URL (extension left
-// empty, since the URL carries none). Not handled (false) for a non-media type
-// or an unreachable host, so the caller keeps gallery-dl's unsupported error.
+// gallery-dl rejected as unsupported. A HEAD reveals the content type; an
+// ingestable media type yields one item whose metadata rebuilds the submitted
+// URL (extension left empty, since the URL carries none). Not handled (false)
+// for a type monbooru cannot ingest or an unreachable host, so the caller keeps
+// gallery-dl's unsupported error.
 func directlinkResolve(ctx context.Context, rawURL string) ([]Item, bool) {
 	u, ok := parseHTTPURL(rawURL)
 	if !ok {
@@ -92,7 +93,7 @@ func directlinkResolve(ctx context.Context, rawURL string) ([]Item, bool) {
 	if !ok {
 		return nil, false
 	}
-	if _, ok := mediaExtension(ct); !ok {
+	if _, ok := ingestableMedia(ct); !ok {
 		return nil, false
 	}
 	return []Item{itemFromMeta(directlinkMeta(u))}, true
@@ -101,8 +102,8 @@ func directlinkResolve(ctx context.Context, rawURL string) ([]Item, bool) {
 // directlinkDownload fetches a media URL gallery-dl rejected as unsupported (see
 // directlinkResolve) into workDir as a single directlink file. The extension
 // comes from the served content type, so the pushed file carries the real type
-// even though the URL had none. Not handled (false) when the URL is not a media
-// file, so the caller keeps gallery-dl's error.
+// even though the URL had none. Not handled (false) when the type is not media
+// monbooru can ingest, so the caller keeps gallery-dl's error.
 func directlinkDownload(ctx context.Context, rawURL, workDir string, onFile func(int, Downloaded)) ([]Downloaded, bool, error) {
 	u, ok := parseHTTPURL(rawURL)
 	if !ok {
@@ -121,7 +122,7 @@ func directlinkDownload(ctx context.Context, rawURL, workDir string, onFile func
 	if resp.StatusCode != http.StatusOK {
 		return nil, false, nil
 	}
-	ext, ok := mediaExtension(resp.Header.Get("Content-Type"))
+	ext, ok := ingestableMedia(resp.Header.Get("Content-Type"))
 	if !ok {
 		return nil, false, nil
 	}

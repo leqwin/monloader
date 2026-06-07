@@ -45,7 +45,7 @@ func buildSpec(baseURL string) map[string]any {
 					"properties": map[string]any{
 						"created":   map[string]any{"type": "integer"},
 						"duplicate": map[string]any{"type": "integer"},
-						"skipped":   map[string]any{"type": "integer", "description": "Posts the gallery-dl archive already had"},
+						"skipped":   map[string]any{"type": "integer", "description": "Posts the gallery-dl archive already had, or files monbooru cannot ingest"},
 						"failed":    map[string]any{"type": "integer"},
 						"canceled":  map[string]any{"type": "integer", "description": "Items aborted by a job cancel, kept out of failed"},
 						"total":     map[string]any{"type": "integer"},
@@ -58,7 +58,7 @@ func buildSpec(baseURL string) map[string]any {
 						"num":          map[string]any{"type": "integer", "description": "1-based pool page order"},
 						"url":          map[string]any{"type": "string", "description": "canonical source post page"},
 						"status":       map[string]any{"type": "string", "description": "pending, downloaded, uploaded, done, skipped, failed"},
-						"outcome":      map[string]any{"type": "string", "description": "created, duplicate, skipped_archive, failed"},
+						"outcome":      map[string]any{"type": "string", "description": "created, duplicate, skipped_archive, skipped_unsupported, failed"},
 						"monbooru_id":  map[string]any{"type": "integer"},
 						"sha256":       map[string]any{"type": "string"},
 						"tag_warnings": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Tags monbooru rejected on the push; recorded, not fatal"},

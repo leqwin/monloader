@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -54,7 +55,7 @@ func (p *Processor) Process(ctx context.Context, job *queue.Job) error {
 	snap := job.Snapshot()
 
 	rng, limit := p.rangeFor(snap)
-	resolved, err := p.runner.Resolve(ctx, snap.URL, rng)
+	res, err := p.runner.Resolve(ctx, snap.URL, rng, false)
 	if err != nil {
 		code := errorCode(err)
 		job.Fail(code, err.Error(), time.Now())
@@ -63,10 +64,18 @@ func (p *Processor) Process(ctx context.Context, job *queue.Job) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	if len(resolved) == 0 {
+	if len(res.Items) == 0 {
+		// No downloadable posts. A dispatcher (a forum thread, a manga title)
+		// hands off to child extractors via Message.Queue, which the -j pass
+		// lists but does not follow; route those before calling it empty.
+		if len(res.Queue) > 0 {
+			return p.processDispatch(ctx, job, snap, res, rng, limit)
+		}
 		// Nothing matched: a clean, empty success.
 		return nil
 	}
+
+	resolved := res.Items
 	site := resolved[0].Category
 	// A manga/comic gallery bundles its pages into one cbz for the reader; a
 	// booru pool's pages push as an ordered collection (through processItems).
@@ -77,14 +86,15 @@ func (p *Processor) Process(ctx context.Context, job *queue.Job) error {
 		// A booru pool or a manga gallery is one work the user asked for as a
 		// unit, so the per-job cap - which exists to bound an open-ended search -
 		// must not truncate it. Re-resolve and download the whole thing.
-		resolved, err = p.runner.Resolve(ctx, snap.URL, "")
-		if err != nil {
-			job.Fail(errorCode(err), err.Error(), time.Now())
-			return err
+		whole, rerr := p.runner.Resolve(ctx, snap.URL, "", false)
+		if rerr != nil {
+			job.Fail(errorCode(rerr), rerr.Error(), time.Now())
+			return rerr
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		resolved = whole.Items
 		rng = ""
 	} else if limit > 0 && len(resolved) >= limit {
 		// A resolve that returned the full cap likely truncated a larger source,
@@ -94,9 +104,49 @@ func (p *Processor) Process(ctx context.Context, job *queue.Job) error {
 		logx.Infof("queue: job %d capped to the first %d items (--range %s); re-submit with a higher range to fetch more", snap.ID, limit, rng)
 	}
 
+	return p.fetch(ctx, job, snap, resolved, site, cbz, false, rng)
+}
+
+// processDispatch handles a URL that resolved to Message.Queue handoffs instead
+// of files. A manga/comic title is a series the cbz path cannot bundle as one
+// book; everything else (a forum thread, an archive board) re-resolves deep so
+// its externally-hosted files come down as loose items.
+func (p *Processor) processDispatch(ctx context.Context, job, snap *queue.Job, res gdl.ResolveResult, rng string, limit int) error {
+	if p.mapper.KindOf(res.Category) == mapping.KindManga {
+		// A manga/comic title lists its chapters; import each as its own cbz.
+		p.processChapters(ctx, job, snap, res, limit)
+		return nil
+	}
+	// -J follows the handoffs into their files; --chapter-range (carried by rng)
+	// bounds the child window so an open thread or board is not unbounded.
+	deep, err := p.runner.Resolve(ctx, snap.URL, rng, true)
+	if err != nil {
+		job.Fail(errorCode(err), err.Error(), time.Now())
+		return err
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if len(deep.Items) == 0 {
+		return nil
+	}
+	if limit > 0 && len(res.Queue) >= limit {
+		job.SetCapped(limit)
+		logx.Infof("queue: job %d capped to the first %d children (--chapter-range %s); re-submit with a higher range to fetch more", snap.ID, limit, rng)
+	}
+	// The job's site is the dispatcher itself (the forum), not the first image
+	// host its leaves resolved to; each item still maps by its own metadata.
+	return p.fetch(ctx, job, snap, deep.Items, res.Category, false, true, rng)
+}
+
+// fetch downloads the resolved posts and pushes them: a manga/comic gallery as
+// one cbz, everything else as loose items. deep marks a dispatcher whose
+// children were resolved with -J, so the download follows the same handoffs and
+// bounds the child window with --chapter-range.
+func (p *Processor) fetch(ctx context.Context, job, snap *queue.Job, resolved []gdl.Item, site string, cbz, deep bool, rng string) error {
 	job.SetSite(site)
-	// A successful resolve means we reached the booru and it returned posts;
-	// record it for the settings "last reached" indicator (via fetch).
+	// A successful resolve means we reached the source and it returned posts;
+	// record it for the settings "last reached" indicator.
 	p.siteState.Reached(site, time.Now())
 	gallery := snap.Gallery
 	if gallery == "" {
@@ -130,7 +180,7 @@ func (p *Processor) Process(ctx context.Context, job *queue.Job) error {
 	// A cbz bundle bypasses the gallery-dl archive so every page is fetched into
 	// /work and the book always assembles complete, never short from a prior run
 	// having recorded some pages in the archive.
-	downloaded, dlErr := p.runner.Download(ctx, snap.URL, rng, workDir, snap.Force || cbz, onFile)
+	downloaded, dlErr := p.runner.Download(ctx, snap.URL, rng, workDir, snap.Force || cbz, onFile, deep)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -149,7 +199,7 @@ func (p *Processor) Process(ctx context.Context, job *queue.Job) error {
 	}
 
 	if cbz {
-		p.processCBZ(ctx, job, writtenOnly(downloaded), len(resolved), gallery, workDir, dlErr)
+		p.processCBZ(ctx, job, 0, writtenOnly(downloaded), len(resolved), gallery, workDir, dlErr, snap.URL)
 		return nil
 	}
 	p.processItems(ctx, job, downloaded, len(resolved), gallery, snap.URL, dlErr)
@@ -236,6 +286,10 @@ func (p *Processor) processItems(ctx context.Context, job *queue.Job, downloaded
 			continue
 		}
 		d := downloaded[i]
+		if !gdl.Ingestable(d.Path) {
+			skipUnsupported(job, i)
+			continue
+		}
 		pf := p.mapper.Map(d.Meta)
 		// A pool with no num orders by source position.
 		order := pf.CollectionOrder
@@ -277,12 +331,99 @@ func (p *Processor) pushOne(ctx context.Context, job *queue.Job, i int, path str
 	_ = os.Remove(path + ".json")
 }
 
+// processChapters imports a manga/comic title (series) URL: each queued chapter
+// is resolved, downloaded, and bundled into its own cbz pushed as its own manga
+// (the single-gallery cbz path, run once per chapter). The job cap bounds the
+// chapter count; the full chapter list is known, so only an over-cap title is
+// flagged capped.
+func (p *Processor) processChapters(ctx context.Context, job, snap *queue.Job, res gdl.ResolveResult, limit int) {
+	site := res.Category
+	job.SetSite(site)
+	p.siteState.Reached(site, time.Now())
+	gallery := snap.Gallery
+	if gallery == "" {
+		gallery = p.mapper.Gallery(site)
+	}
+	job.SetGallery(gallery)
+
+	chapters := res.Queue
+	capped := limit > 0 && len(chapters) > limit
+	if capped {
+		chapters = chapters[:limit]
+	}
+	job.SetItems(chapterItems(chapters))
+	if capped {
+		job.SetCapped(limit)
+		logx.Infof("queue: job %d capped to the first %d chapters; re-submit with a higher range to fetch more", snap.ID, limit)
+	}
+
+	for i, ch := range chapters {
+		if ctx.Err() != nil {
+			return // the worker marks the remaining pending items canceled
+		}
+		chapterDir := filepath.Join(p.workRoot, fmt.Sprintf("job-%d-ch%d", snap.ID, i))
+		p.importChapter(ctx, job, i, ch.URL, gallery, chapterDir)
+		os.RemoveAll(chapterDir)
+	}
+}
+
+// importChapter resolves one chapter URL, downloads its pages, and pushes the
+// assembled cbz as item i. A chapter is one book, so the archive is bypassed
+// (every page lands) and a short or failed download fails the item rather than
+// pushing a truncated archive.
+func (p *Processor) importChapter(ctx context.Context, job *queue.Job, i int, chapterURL, gallery, workDir string) {
+	res, err := p.runner.Resolve(ctx, chapterURL, "", false)
+	if err != nil {
+		failItem(job, i, errorCode(err), err.Error())
+		return
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	downloaded, dlErr := p.runner.Download(ctx, chapterURL, "", workDir, true, nil, false)
+	if ctx.Err() != nil {
+		return
+	}
+	p.processCBZ(ctx, job, i, writtenOnly(downloaded), len(res.Items), gallery, workDir, dlErr, chapterURL)
+}
+
+// chapterItems is the pending item list for a manga title: one bundle item per
+// queued chapter, linking back to the chapter URL.
+func chapterItems(chapters []gdl.QueueItem) []queue.Item {
+	items := make([]queue.Item, len(chapters))
+	for i, ch := range chapters {
+		id := kwdict.ID(ch.Meta)
+		if id != "" {
+			id = "chapter:" + id
+		} else {
+			id = chapterLabel(ch.URL)
+		}
+		items[i] = queue.Item{PostID: id, URL: ch.URL, Status: queue.ItemPending}
+	}
+	return items
+}
+
+// chapterLabel is the chapter slug (the last path segment of its URL): a short,
+// stable label for a chapter whose metadata carries no id, so the queue row is
+// not the whole URL.
+func chapterLabel(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	p := strings.TrimRight(u.Path, "/")
+	if i := strings.LastIndex(p, "/"); i >= 0 {
+		return p[i+1:]
+	}
+	return p
+}
+
 // processCBZ bundles a manga/comic gallery's pages into one .cbz and pushes it as
 // a single archive: union tags, strictest rating, the gallery name as filename.
 // The book must be whole, so a download error or a short page count fails the
 // item rather than pushing a truncated archive. The .cbz is built to a scratch
 // file and streamed to monbooru so a large gallery is never buffered in memory.
-func (p *Processor) processCBZ(ctx context.Context, job *queue.Job, downloaded []gdl.Downloaded, total int, gallery, workDir string, dlErr error) {
+func (p *Processor) processCBZ(ctx context.Context, job *queue.Job, itemIdx int, downloaded []gdl.Downloaded, total int, gallery, workDir string, dlErr error, sourceURL string) {
 	bundleName := poolName(downloaded)
 
 	if ctx.Err() != nil {
@@ -291,33 +432,33 @@ func (p *Processor) processCBZ(ctx context.Context, job *queue.Job, downloaded [
 
 	pages := orderedPages(downloaded)
 	if len(pages) == 0 {
-		p.markUndownloaded(job, 0, dlErr)
+		p.markUndownloaded(job, itemIdx, dlErr)
 		return
 	}
 	if dlErr != nil {
-		failItem(job, 0, errorCode(dlErr), dlErr.Error())
+		failItem(job, itemIdx, errorCode(dlErr), dlErr.Error())
 		return
 	}
 	if len(pages) < total {
-		failItem(job, 0, queue.ErrCodeDownloadFailed, fmt.Sprintf("bundled %d of %d pages", len(pages), total))
+		failItem(job, itemIdx, queue.ErrCodeDownloadFailed, fmt.Sprintf("bundled %d of %d pages", len(pages), total))
 		return
 	}
 
 	dest := filepath.Join(workDir, "bundle.cbz")
 	if err := buildCBZFile(pages, dest); err != nil {
-		failItem(job, 0, queue.ErrCodeMappingFailed, err.Error())
+		failItem(job, itemIdx, queue.ErrCodeMappingFailed, err.Error())
 		return
 	}
-	job.UpdateItem(0, func(it *queue.Item) { it.Status = queue.ItemDownloaded })
+	job.UpdateItem(itemIdx, func(it *queue.Item) { it.Status = queue.ItemDownloaded })
 
-	meta := p.aggregatePool(downloaded, job.Snapshot().URL, bundleName)
-	job.UpdateItem(0, func(it *queue.Item) { it.Status = queue.ItemUploaded })
+	meta := p.aggregatePool(downloaded, sourceURL, bundleName)
+	job.UpdateItem(itemIdx, func(it *queue.Item) { it.Status = queue.ItemUploaded })
 	res, err := p.client.PushImageFile(ctx, dest, meta, gallery)
 	if err != nil {
-		failItem(job, 0, errorCode(err), err.Error())
+		failItem(job, itemIdx, errorCode(err), err.Error())
 		return
 	}
-	recordSuccess(job, 0, res)
+	recordSuccess(job, itemIdx, res)
 }
 
 // aggregatePool merges the bundle's pages into one push: union of non-rating
@@ -374,6 +515,15 @@ func (p *Processor) markUndownloaded(job *queue.Job, i int, dlErr error) {
 	job.UpdateItem(i, func(it *queue.Item) {
 		it.Status = queue.ItemSkipped
 		it.Outcome = queue.OutcomeSkippedArchive
+	})
+}
+
+// skipUnsupported records a downloaded file whose type monbooru cannot ingest:
+// skipped, not failed, so it does not drag an otherwise-clean job to partial.
+func skipUnsupported(job *queue.Job, i int) {
+	job.UpdateItem(i, func(it *queue.Item) {
+		it.Status = queue.ItemSkipped
+		it.Outcome = queue.OutcomeSkippedUnsupported
 	})
 }
 

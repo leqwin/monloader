@@ -37,6 +37,47 @@ func TestMediaExtension(t *testing.T) {
 	}
 }
 
+func TestIngestableMedia(t *testing.T) {
+	for _, tc := range []struct {
+		ct   string
+		want string
+		ok   bool
+	}{
+		{"image/jpeg", "jpg", true},
+		{"image/png", "png", true},
+		{"image/webp", "webp", true},
+		{"video/mp4", "mp4", true},
+		{"image/avif", "", false},      // media, but monbooru cannot ingest it
+		{"image/svg+xml", "", false},   // ditto
+		{"video/quicktime", "", false}, // ditto
+		{"text/html", "", false},       // not media at all
+	} {
+		got, ok := ingestableMedia(tc.ct)
+		if ok != tc.ok || got != tc.want {
+			t.Errorf("ingestableMedia(%q) = (%q, %v), want (%q, %v)", tc.ct, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+func TestDirectlinkResolveDeclinesUningestible(t *testing.T) {
+	// A bare URL whose media type monbooru cannot ingest is declined, so the job
+	// fails as unsupported_url rather than downloading a file the push would only
+	// reject. An ingestable type is still handled.
+	serve := func(ct string) *httptest.Server {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", ct)
+		}))
+		t.Cleanup(srv.Close)
+		return srv
+	}
+	if _, ok := directlinkResolve(context.Background(), serve("image/avif").URL+"/avatar"); ok {
+		t.Error("an avif directlink should be declined (monbooru cannot ingest it)")
+	}
+	if _, ok := directlinkResolve(context.Background(), serve("image/png").URL+"/avatar"); !ok {
+		t.Error("a png directlink should be handled")
+	}
+}
+
 func TestDirectlinkMeta(t *testing.T) {
 	for _, tc := range []struct {
 		raw                          string
@@ -178,10 +219,11 @@ func TestLiveResolveDirectlinkFallback(t *testing.T) {
 	srv := mediaServer(t, []byte("\xff\xd8\xffjpeg"))
 	rawURL := srv.URL + "/ytc/AIdro_avatar=s400-c-k-no-rj"
 
-	items, err := tool.Resolve(context.Background(), rawURL, "")
+	res, err := tool.Resolve(context.Background(), rawURL, "", false)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
+	items := res.Items
 	if len(items) != 1 {
 		t.Fatalf("items = %d, want 1 directlink item", len(items))
 	}
@@ -207,7 +249,7 @@ func TestLiveDownloadDirectlinkFallback(t *testing.T) {
 	var streamed []Downloaded
 	dls, err := tool.Download(context.Background(), rawURL, "", workDir, false, func(_ int, d Downloaded) {
 		streamed = append(streamed, d)
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("Download: %v", err)
 	}

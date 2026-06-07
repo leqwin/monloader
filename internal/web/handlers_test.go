@@ -74,7 +74,7 @@ func TestEnqueueBlockedWhenMonbooruUnconfigured(t *testing.T) {
 	srv := newWebServer(t, "", "") // blank API URL: no monbooru configured
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
-	body := readBody(t, postForm(t, ts, srv, "/", url.Values{"url": {"https://danbooru.donmai.us/posts/1"}}))
+	body := readBody(t, postForm(t, ts, srv, "/", url.Values{"url": {"https://example.com/posts/1"}}))
 	if !strings.Contains(body, "not configured") {
 		t.Errorf("submit with no monbooru should flash a not-configured error, got %q", body)
 	}

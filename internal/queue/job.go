@@ -35,10 +35,11 @@ const (
 type Outcome string
 
 const (
-	OutcomeCreated        Outcome = "created"
-	OutcomeDuplicate      Outcome = "duplicate"
-	OutcomeSkippedArchive Outcome = "skipped_archive"
-	OutcomeFailed         Outcome = "failed"
+	OutcomeCreated            Outcome = "created"
+	OutcomeDuplicate          Outcome = "duplicate"
+	OutcomeSkippedArchive     Outcome = "skipped_archive"
+	OutcomeSkippedUnsupported Outcome = "skipped_unsupported"
+	OutcomeFailed             Outcome = "failed"
 )
 
 // Error-code vocabulary. Stable strings the future browser
@@ -151,8 +152,9 @@ func validJobTransition(from, to JobStatus) bool {
 }
 
 // validItemTransition is the centralized item state machine.
-// pending downloads (or is archive-skipped); downloaded uploads; uploaded
-// lands as done (created) or skipped (duplicate); any state can fail.
+// pending downloads (or is archive-skipped); downloaded uploads, or is skipped
+// when monbooru cannot ingest its type; uploaded lands as done (created) or
+// skipped (duplicate); any state can fail.
 func validItemTransition(from, to ItemStatus) bool {
 	if to == ItemFailed {
 		return from == ItemPending || from == ItemDownloaded || from == ItemUploaded
@@ -161,7 +163,7 @@ func validItemTransition(from, to ItemStatus) bool {
 	case ItemPending:
 		return to == ItemDownloaded || to == ItemSkipped
 	case ItemDownloaded:
-		return to == ItemUploaded
+		return to == ItemUploaded || to == ItemSkipped
 	case ItemUploaded:
 		return to == ItemDone || to == ItemSkipped
 	}
@@ -417,7 +419,7 @@ func summarize(items []Item) Summary {
 			s.Created++
 		case OutcomeDuplicate:
 			s.Duplicate++
-		case OutcomeSkippedArchive:
+		case OutcomeSkippedArchive, OutcomeSkippedUnsupported:
 			s.Skipped++
 		case OutcomeFailed:
 			if it.ErrorCode == ErrCodeCanceled {

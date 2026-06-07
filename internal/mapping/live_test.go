@@ -44,7 +44,7 @@ func liveDownloadOne(t *testing.T, url string) (*Mapper, map[string]any) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	downloaded, err := tool.Download(ctx, url, "1-1", filepath.Join(dir, "work"), false, nil)
+	downloaded, err := tool.Download(ctx, url, "1-1", filepath.Join(dir, "work"), false, nil, false)
 	if err != nil {
 		t.Fatalf("real Download: %v", err)
 	}

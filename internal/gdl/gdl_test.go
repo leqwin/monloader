@@ -14,14 +14,14 @@ import (
 
 func TestParseResolveItems(t *testing.T) {
 	const j = `[[3,"https://cdn.donmai.us/x.jpg",{"category":"danbooru","subcategory":"post","id":11474309,"rating":"g"}]]`
-	items, err := parseResolve([]byte(j))
+	res, err := parseResolve([]byte(j))
 	if err != nil {
 		t.Fatalf("parseResolve: %v", err)
 	}
-	if len(items) != 1 {
-		t.Fatalf("got %d items, want 1", len(items))
+	if len(res.Items) != 1 {
+		t.Fatalf("got %d items, want 1", len(res.Items))
 	}
-	it := items[0]
+	it := res.Items[0]
 	if it.Category != "danbooru" || it.Subcategory != "post" || it.ID != "11474309" {
 		t.Errorf("item fields wrong: %+v", it)
 	}
@@ -36,19 +36,19 @@ func TestParseResolvePoolOrder(t *testing.T) {
 		[3,"https://cdn.donmai.us/2.jpg",{"category":"danbooru","subcategory":"pool","id":100002,"num":2}],
 		[3,"https://cdn.donmai.us/3.jpg",{"category":"danbooru","subcategory":"pool","id":100003,"num":3}]
 	]`
-	items, err := parseResolve([]byte(j))
+	res, err := parseResolve([]byte(j))
 	if err != nil {
 		t.Fatalf("parseResolve: %v", err)
 	}
-	if len(items) != 3 {
-		t.Fatalf("got %d items, want 3", len(items))
+	if len(res.Items) != 3 {
+		t.Fatalf("got %d items, want 3", len(res.Items))
 	}
 	for i, want := range []int{1, 2, 3} {
-		if items[i].Num != want {
-			t.Errorf("item %d num = %d, want %d", i, items[i].Num, want)
+		if res.Items[i].Num != want {
+			t.Errorf("item %d num = %d, want %d", i, res.Items[i].Num, want)
 		}
-		if items[i].Subcategory != "pool" {
-			t.Errorf("item %d subcategory = %q, want pool", i, items[i].Subcategory)
+		if res.Items[i].Subcategory != "pool" {
+			t.Errorf("item %d subcategory = %q, want pool", i, res.Items[i].Subcategory)
 		}
 	}
 }
@@ -58,9 +58,9 @@ func TestParseResolveSurfacesDataJobError(t *testing.T) {
 	// still exiting 0; parseResolve must surface it (classified) instead of
 	// returning a misleading empty success.
 	const j = `[[-1,{"error":"AuthRequired","message":"'api-key' & 'user-id' needed to access the API ('Missing authentication')"}]]`
-	items, err := parseResolve([]byte(j))
+	res, err := parseResolve([]byte(j))
 	if err == nil {
-		t.Fatalf("expected an error, got %d items", len(items))
+		t.Fatalf("expected an error, got %d items", len(res.Items))
 	}
 	var ge *queue.CodedError
 	if e, ok := err.(*queue.CodedError); ok {
@@ -71,17 +71,44 @@ func TestParseResolveSurfacesDataJobError(t *testing.T) {
 	}
 }
 
+func TestParseResolveQueueDispatch(t *testing.T) {
+	// A dispatcher URL (a forum thread, a manga title) emits Message.Queue
+	// handoffs (type 6) the -j pass lists but does not follow. They land in
+	// Queue, not Items, with the parent category captured for routing.
+	const j = `[
+		[2,{"category":"mangadex","subcategory":"manga"}],
+		[6,"https://example.com/chapter/aaa",{"category":"mangadex","subcategory":"manga"}],
+		[6,"https://example.com/chapter/bbb",{"category":"mangadex","subcategory":"manga"}]
+	]`
+	res, err := parseResolve([]byte(j))
+	if err != nil {
+		t.Fatalf("parseResolve: %v", err)
+	}
+	if len(res.Items) != 0 {
+		t.Errorf("got %d items, want 0 (a dispatcher yields no files)", len(res.Items))
+	}
+	if len(res.Queue) != 2 {
+		t.Fatalf("got %d queue handoffs, want 2", len(res.Queue))
+	}
+	if res.Queue[0].URL != "https://example.com/chapter/aaa" {
+		t.Errorf("queue url = %q, want the chapter url", res.Queue[0].URL)
+	}
+	if res.Category != "mangadex" {
+		t.Errorf("category = %q, want mangadex", res.Category)
+	}
+}
+
 func TestParseExtractors(t *testing.T) {
 	// The combined "Category: <cat> - Subcategory: <sub>" line and an instance
 	// extractor's blank category are the two shapes the parser must handle.
 	const list = `DanbooruPoolExtractor
 Extractor for posts from danbooru pools
 Category:  - Subcategory: pool
-Example : https://danbooru.donmai.us/pools/7659
+Example : https://example.com/pools/7659
 
 PixivWorkExtractor
 Category: pixiv - Subcategory: work
-Example : https://www.pixiv.net/en/artworks/966412
+Example : https://example.com/en/artworks/966412
 `
 	ex := parseExtractors([]byte(list))
 	if len(ex) != 2 {
@@ -167,15 +194,20 @@ func TestNoTagsArgs(t *testing.T) {
 
 func TestDownloadArgs(t *testing.T) {
 	// Destination and range precede the URL; the archive is left in place.
-	got := downloadArgs("/work", "1-3", "http://x", false)
+	got := downloadArgs("/work", "1-3", "http://x", false, false)
 	if want := []string{"-D", "/work", "--range", "1-3", "http://x"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("downloadArgs = %v, want %v", got, want)
 	}
 	// A forced run adds `-o archive=` before the URL so gallery-dl ignores the
 	// download-archive and re-fetches already-recorded posts.
-	forced := downloadArgs("/work", "", "http://x", true)
+	forced := downloadArgs("/work", "", "http://x", true, false)
 	if want := []string{"-D", "/work", "-o", "archive=", "http://x"}; !reflect.DeepEqual(forced, want) {
 		t.Errorf("forced downloadArgs = %v, want %v", forced, want)
+	}
+	// A deep (dispatcher) download bounds the child window with --chapter-range.
+	deep := downloadArgs("/work", "1-3", "http://x", false, true)
+	if want := []string{"-D", "/work", "--chapter-range", "1-3", "http://x"}; !reflect.DeepEqual(deep, want) {
+		t.Errorf("deep downloadArgs = %v, want %v", deep, want)
 	}
 }
 

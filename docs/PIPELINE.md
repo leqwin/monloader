@@ -17,20 +17,21 @@ behind it, and the outcome each item ends up with.
 
 ## Per-item outcomes
 
-Every item ends with one of four outcomes, never silently dropped:
+Every item ends with one of five outcomes, never silently dropped:
 
 | outcome | meaning |
 |---|---|
 | `created` | new image accepted by monbooru (HTTP 201) |
 | `duplicate` | monbooru already had this sha256 (HTTP 200, alias) |
 | `skipped_archive` | gallery-dl's archive already had this post; not fetched |
+| `skipped_unsupported` | monbooru cannot ingest this file type; not pushed |
 | `failed` | something went wrong; carries an `error_code` |
 
 A `failed` item carries one of these stable codes :
 
 | error_code | when |
 |---|---|
-| `unsupported_url` | gallery-dl matched no extractor for the URL, and it is not itself a direct link to a media file |
+| `unsupported_url` | gallery-dl matched no extractor for the URL, and it is not itself a direct link to a media file monbooru can ingest |
 | `auth_required` | the site needs credentials (a 401/403 with a missing-auth message) |
 | `blocked` | a bot-protection wall (Cloudflare / captcha challenge), kept distinct from `auth_required` so its 403 is not read as a missing credential |
 | `rate_limited` | the site returned 429 / a rate-limit error |
