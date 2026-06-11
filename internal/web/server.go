@@ -97,8 +97,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /{$}", s.enqueueForm)
 	mux.HandleFunc("GET /queue", s.queueScreen)
 	mux.HandleFunc("GET /internal/queue-rows", s.queueRows)
+	mux.HandleFunc("GET /internal/queue-rows/{root}/items", s.queueRowItems)
 	mux.HandleFunc("POST /queue/{id}/retry", s.retryJob)
 	mux.HandleFunc("POST /queue/{id}/continue", s.continueJob)
+	mux.HandleFunc("POST /queue/{id}/continue-all", s.continueAllJob)
 	mux.HandleFunc("POST /queue/clear", s.clearQueue)
 	mux.HandleFunc("DELETE /queue/{id}", s.deleteJob)
 	mux.HandleFunc("GET /internal/monbooru-status", s.monbooruStatus)
@@ -142,12 +144,54 @@ func templateFuncs() template.FuncMap {
 			}
 			return m
 		},
-		"humanBytes": humanBytes,
-		"humanSince": humanSince,
-		"stampUTC":   stampUTC,
-		"join":       strings.Join,
+		"humanBytes":  humanBytes,
+		"humanSince":  humanSince,
+		"stampUTC":    stampUTC,
+		"join":        strings.Join,
+		"itemCap":     func() int { return maxQueueItems },
+		"moreSummary": moreSummary,
 	}
 }
+
+// moreSummary describes the items hidden behind a "+N more" toggle as a compact
+// "3 downloading, 2 created" by state - only the non-zero parts. An item not yet
+// at a terminal outcome counts as downloading.
+func moreSummary(items []queue.Item) string {
+	var downloading, created, duplicate, skipped, failed, canceled int
+	for _, it := range items {
+		switch {
+		case it.ErrorCode == queue.ErrCodeCanceled:
+			canceled++
+		case it.Outcome == queue.OutcomeCreated:
+			created++
+		case it.Outcome == queue.OutcomeDuplicate:
+			duplicate++
+		case it.Outcome == queue.OutcomeSkippedArchive, it.Outcome == queue.OutcomeSkippedUnsupported:
+			skipped++
+		case it.Outcome == queue.OutcomeFailed:
+			failed++
+		default:
+			downloading++
+		}
+	}
+	parts := make([]string, 0, 6)
+	for _, c := range []struct {
+		n     int
+		label string
+	}{
+		{downloading, "downloading"}, {created, "created"}, {duplicate, "duplicate"},
+		{skipped, "skipped"}, {failed, "failed"}, {canceled, "canceled"},
+	} {
+		if c.n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", c.n, c.label))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// maxQueueItems caps how many of a job's items render before a "+N more"
+// toggle, so a large pool or search does not fill the screen at once.
+const maxQueueItems = 20
 
 // humanSince formats how long ago t was, compactly, for the narrow sites
 // state column: "just now", "5m ago", "2h ago", "3d ago". A zero time renders
@@ -219,6 +263,9 @@ func (s *Server) base(r *http.Request, nav, title string) map[string]any {
 		// server-side at once. A configured-but-down instance is left to the
 		// async connectivity light to surface.
 		"MonbooruConfigured": s.monbooruConfigured(),
+		// Browser-facing monbooru base for the topbar and footer links, or ""
+		// when no web_url is set, in which case neither link renders.
+		"MonbooruWebURL": s.monbooruWebLink(),
 	}
 }
 
@@ -325,22 +372,23 @@ func (s *Server) monbooruConfigured() bool {
 }
 
 // checkMonbooru returns "ok", "rejected" (monbooru answered but refused the
-// token), or "down" (no response) from a short-lived connectivity probe. The
-// rejected state distinguishes a bad/expired token from an actual network
-// outage, which otherwise both read as "unreachable".
-func (s *Server) checkMonbooru(ctx context.Context) string {
+// token), or "down" (no response) from a short-lived connectivity probe, plus
+// the monbooru version when the probe succeeds ("" otherwise). The rejected
+// state distinguishes a bad/expired token from an actual network outage, which
+// otherwise both read as "unreachable".
+func (s *Server) checkMonbooru(ctx context.Context) (status, version string) {
 	if !s.monbooruConfigured() {
-		return "down"
+		return "down", ""
 	}
 	cctx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
-	err := s.client.TestConnection(cctx)
+	version, err := s.client.TestConnection(cctx)
 	if err == nil {
-		return "ok"
+		return "ok", version
 	}
 	var ce *queue.CodedError
 	if errors.As(err, &ce) && ce.Code == queue.ErrCodeMonbooruRejected {
-		return "rejected"
+		return "rejected", ""
 	}
-	return "down"
+	return "down", ""
 }

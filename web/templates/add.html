@@ -18,6 +18,7 @@
   <div class="links">
     <a href="/queue">[ queue ]</a>
     <a href="/settings">[ settings ]</a>
+    {{if .MonbooruWebURL}}<a href="{{.MonbooruWebURL}}" target="_blank" rel="noopener">[ go to monbooru ]</a>{{end}}
   </div>
 </main>
 {{template "footer" .}}

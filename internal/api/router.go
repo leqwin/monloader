@@ -50,6 +50,7 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/queue/{id}", h.auth(h.getJob))
 	mux.HandleFunc("POST /api/v1/queue/{id}/retry", h.auth(h.retryJob))
 	mux.HandleFunc("POST /api/v1/queue/{id}/continue", h.auth(h.continueJob))
+	mux.HandleFunc("POST /api/v1/queue/{id}/continue-all", h.auth(h.continueAllJob))
 	mux.HandleFunc("DELETE /api/v1/queue/{id}", h.auth(h.deleteJob))
 
 	mux.HandleFunc("GET /api/v1/sites", h.auth(h.listSites))

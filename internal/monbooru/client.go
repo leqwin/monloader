@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/leqwin/monloader/internal/config"
 	"github.com/leqwin/monloader/internal/queue"
@@ -211,6 +212,24 @@ func writeFilePart(w *multipart.Writer, filename string, src io.Reader) error {
 	return err
 }
 
+// monbooru caps source at 200 and url at 2048 and rejects anything longer, so
+// trim before the push - a directlink's submitted URL can blow past 2048.
+const (
+	maxSourceLen = 200
+	maxURLLen    = 2048
+)
+
+// trimToLen caps s to max bytes without splitting a multibyte rune.
+func trimToLen(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	for max > 0 && !utf8.RuneStart(s[max]) {
+		max--
+	}
+	return s[:max]
+}
+
 // writeMetaFields writes the non-file form fields, omitting empty optionals so a
 // bare push touches nothing on monbooru's side.
 func writeMetaFields(w *multipart.Writer, meta PushMeta) error {
@@ -228,10 +247,10 @@ func writeMetaFields(w *multipart.Writer, meta PushMeta) error {
 		_ = w.WriteField("folder", meta.Folder)
 	}
 	if meta.Source != "" {
-		_ = w.WriteField("source", meta.Source)
+		_ = w.WriteField("source", trimToLen(meta.Source, maxSourceLen))
 	}
 	if meta.URL != "" {
-		_ = w.WriteField("url", meta.URL)
+		_ = w.WriteField("url", trimToLen(meta.URL, maxURLLen))
 	}
 	if meta.Collection != "" {
 		_ = w.WriteField("collection", meta.Collection)
@@ -301,21 +320,27 @@ func (c *Client) ListGalleries(ctx context.Context) ([]Gallery, error) {
 }
 
 // TestConnection hits GET /api/v1/ to verify the configured URL and token,
-// backing the settings "test connection" button.
-func (c *Client) TestConnection(ctx context.Context) error {
+// backing the settings "test connection" button. On success it returns the
+// monbooru version from the root response, or "" when the response omits it
+// (an older monbooru).
+func (c *Client) TestConnection(ctx context.Context) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base()+"/api/v1/", nil)
 	if err != nil {
-		return err
+		return "", err
 	}
 	c.authHeader(req)
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return &queue.CodedError{Code: queue.ErrCodeMonbooruUnreachable, Msg: err.Error()}
+		return "", &queue.CodedError{Code: queue.ErrCodeMonbooruUnreachable, Msg: err.Error()}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		return &queue.CodedError{Code: queue.ErrCodeMonbooruRejected, Msg: apiErrMessage(body, resp.Status)}
+		return "", &queue.CodedError{Code: queue.ErrCodeMonbooruRejected, Msg: apiErrMessage(body, resp.Status)}
 	}
-	return nil
+	var info struct {
+		Version string `json:"version"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&info)
+	return info.Version, nil
 }

@@ -25,6 +25,11 @@ import (
 )
 
 func main() {
+	if len(os.Args) >= 2 && os.Args[1] == "healthcheck" {
+		runHealthcheck(os.Args[2:])
+		return
+	}
+
 	configPath := flag.String("config", "./monloader.toml", "path to the monloader.toml config file")
 	hashPassword := flag.String("hash-password", "", "print the bcrypt hash of the given password and exit")
 	showVersion := flag.Bool("version", false, "print the version and exit")

@@ -2,7 +2,8 @@
 {{template "topbar" .}}
 {{template "monbooru_banner" .}}
 <main id="content" class="content-wide">
-  <form class="add-bar" hx-post="/" hx-target="#add-flash" hx-swap="innerHTML">
+  <form class="add-bar" hx-post="/" hx-target="#add-flash" hx-swap="innerHTML"
+        hx-on::after-request="if (event.detail.xhr.getResponseHeader('HX-Retarget')) this.reset()">
     <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
     <div class="add-row">
       <div class="search-input-wrap">
@@ -10,7 +11,8 @@
       </div>
       <button type="submit" class="needs-monbooru"{{if not .MonbooruConfigured}} disabled{{end}}>download</button>
       <button type="button" hx-post="/queue/clear" hx-target="#queue-rows" hx-swap="innerHTML"
-              hx-headers='{"X-CSRF-Token":"{{.CSRFToken}}"}' hx-confirm="clear recent history?">clear</button>
+              hx-headers='{"X-CSRF-Token":"{{.CSRFToken}}"}' hx-confirm="clear recent history?"
+              data-confirm-ok="clear" data-confirm-danger>clear</button>
     </div>
   </form>
   <div id="add-flash" class="hint"></div>

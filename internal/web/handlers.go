@@ -48,6 +48,14 @@ func (s *Server) enqueueForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.queue.Enqueue(target, queue.Options{})
+	// Refresh the rows in place when adding from the queue screen; redirecting
+	// would reload the page and drop the operator's expand/collapse state.
+	if onQueueScreen(r) {
+		w.Header().Set("HX-Retarget", "#queue-rows")
+		w.Header().Set("HX-Reswap", "innerHTML")
+		s.queueRows(w, r)
+		return
+	}
 	w.Header().Set("HX-Redirect", "/queue")
 }
 
@@ -56,6 +64,12 @@ func (s *Server) enqueueForm(w http.ResponseWriter, r *http.Request) {
 func validURL(s string) bool {
 	u, err := url.Parse(s)
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+}
+
+// onQueueScreen reports whether the htmx request was issued from /queue.
+func onQueueScreen(r *http.Request) bool {
+	u, err := url.Parse(r.Header.Get("HX-Current-URL"))
+	return err == nil && u.Path == "/queue"
 }
 
 func flashFragment(w http.ResponseWriter, kind, msg string) {
@@ -75,11 +89,77 @@ func (s *Server) queueRows(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "queue_rows", data)
 }
 
-// fillQueue adds the job list and the monbooru web base (for image links) to
-// the template data.
+// queueRowItems renders one group's items, fetched when a finished job's row is
+// expanded so the poll does not carry every item of every job.
+func (s *Server) queueRowItems(w http.ResponseWriter, r *http.Request) {
+	root, err := strconv.ParseInt(r.PathValue("root"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	jobs, _ := s.queue.List(queue.ListOptions{})
+	for _, g := range groupJobs(jobs) {
+		if g.Root == root {
+			s.render(w, "queue_items_capped", map[string]any{"Items": g.Items, "MonbooruURL": s.monbooruWebBase()})
+			return
+		}
+	}
+	http.NotFound(w, r)
+}
+
+// jobGroup collapses a continue-series (a capped search and its continuations)
+// into one queue row: the newest window leads, with counts and items summed
+// across the windows.
+type jobGroup struct {
+	Root    int64
+	Lead    *queue.Job
+	Summary queue.Summary
+	Items   []queue.Item
+}
+
+// groupJobs buckets a newest-first job list by series, keeping newest-first
+// order between groups and oldest-first items within each.
+func groupJobs(jobs []*queue.Job) []jobGroup {
+	groups := make([]jobGroup, 0, len(jobs))
+	at := map[int64]int{}
+	for _, j := range jobs {
+		root := j.Root
+		if root == 0 {
+			root = j.ID
+		}
+		if i, ok := at[root]; ok {
+			g := &groups[i]
+			g.Items = append(append([]queue.Item{}, j.Items...), g.Items...)
+			g.Summary = addSummary(g.Summary, j.Summary)
+			continue
+		}
+		at[root] = len(groups)
+		groups = append(groups, jobGroup{
+			Root:    root,
+			Lead:    j,
+			Summary: j.Summary,
+			Items:   append([]queue.Item{}, j.Items...),
+		})
+	}
+	return groups
+}
+
+func addSummary(a, b queue.Summary) queue.Summary {
+	return queue.Summary{
+		Created:   a.Created + b.Created,
+		Duplicate: a.Duplicate + b.Duplicate,
+		Skipped:   a.Skipped + b.Skipped,
+		Failed:    a.Failed + b.Failed,
+		Canceled:  a.Canceled + b.Canceled,
+		Total:     a.Total + b.Total,
+	}
+}
+
+// fillQueue adds the grouped job list and the monbooru web base (for image
+// links) to the template data.
 func (s *Server) fillQueue(r *http.Request, data map[string]any) {
 	jobs, _ := s.queue.List(queue.ListOptions{})
-	data["Jobs"] = jobs
+	data["Groups"] = groupJobs(jobs)
 	data["MonbooruURL"] = s.monbooruWebBase()
 }
 
@@ -91,6 +171,13 @@ func (s *Server) monbooruWebBase() string {
 		base = s.cfg.Current().Monbooru.APIURL
 	}
 	return strings.TrimRight(base, "/")
+}
+
+// monbooruWebLink is the base for the topbar and footer links to monbooru, or
+// "" when no web_url is set: unlike the image links it never falls back to
+// api_url, which is an internal address that would not resolve from a browser.
+func (s *Server) monbooruWebLink() string {
+	return strings.TrimRight(s.cfg.Current().Monbooru.WebURL, "/")
 }
 
 // retryJob re-queues a finished job. With ?force=1 the re-run bypasses the
@@ -112,9 +199,20 @@ func (s *Server) continueJob(w http.ResponseWriter, r *http.Request) {
 	s.queueRows(w, r)
 }
 
+// continueAllJob starts a fetch-all chain: the queue keeps pulling the next
+// window until the capped search runs short, instead of one click per window.
+func (s *Server) continueAllJob(w http.ResponseWriter, r *http.Request) {
+	if id, err := strconv.ParseInt(r.PathValue("id"), 10, 64); err == nil {
+		_, _ = s.queue.ContinueAll(id)
+	}
+	s.queueRows(w, r)
+}
+
+// deleteJob cancels or removes a queue row. The row collapses a continue-series,
+// so it clears every window in the series, not just the one clicked.
 func (s *Server) deleteJob(w http.ResponseWriter, r *http.Request) {
 	if id, err := strconv.ParseInt(r.PathValue("id"), 10, 64); err == nil {
-		_ = s.queue.Cancel(id)
+		_ = s.queue.CancelSeries(id)
 	}
 	s.queueRows(w, r)
 }
@@ -127,7 +225,12 @@ func (s *Server) clearQueue(w http.ResponseWriter, r *http.Request) {
 
 // monbooruStatus renders the footer connectivity light from a live probe.
 func (s *Server) monbooruStatus(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "conn_light", map[string]any{"Conn": s.checkMonbooru(r.Context())})
+	status, version := s.checkMonbooru(r.Context())
+	s.render(w, "conn_light", map[string]any{
+		"Conn":            status,
+		"MonbooruWebURL":  s.monbooruWebLink(),
+		"MonbooruVersion": version,
+	})
 }
 
 // siteRow is one curated site as the settings table shows it. CSRFToken rides
@@ -334,7 +437,7 @@ func (s *Server) testMonbooru(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	if err := monbooru.New(config.NewProvider(&tmp)).TestConnection(ctx); err != nil {
+	if _, err := monbooru.New(config.NewProvider(&tmp)).TestConnection(ctx); err != nil {
 		s.redirectFlash(w, r, "err", "connection failed: "+err.Error())
 		return
 	}

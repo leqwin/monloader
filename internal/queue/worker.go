@@ -92,9 +92,11 @@ func (q *Queue) runJob(j *Job, ctx context.Context) {
 	case ctx.Err() != nil:
 		j.cancel(q.now())
 	case err != nil:
-		// A processor that classified the failure already set the job's
-		// error code; Fail no-ops when the job is finalized, so the
-		// specific code wins over this generic fallback.
+		// A job-level abort (a failed resolve) leaves no item rows to carry the
+		// reason, so log it here. The processor already classified the failure
+		// and set the job's code; Fail no-ops once finalized, so that code wins
+		// over this generic fallback.
+		logx.Warnf("queue: job %d failed: %s", j.ID, err.Error())
 		j.Fail(ErrCodeDownloadFailed, err.Error(), q.now())
 	default:
 		j.Finalize(q.now())
@@ -112,4 +114,5 @@ func (q *Queue) finish(j *Job) {
 	q.pushFinishedLocked(j)
 	q.mu.Unlock()
 	j.signalDone()
+	q.autoContinue(j)
 }

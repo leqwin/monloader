@@ -78,6 +78,7 @@ func buildSpec(baseURL string) map[string]any {
 						"summary":     map[string]any{"$ref": "#/components/schemas/Summary"},
 						"capped":      map[string]any{"type": "boolean", "description": "The resolve hit the per-job item cap, so more posts may remain"},
 						"cap":         map[string]any{"type": "integer", "description": "The applied item cap when capped is true"},
+						"root":        map[string]any{"type": "integer", "description": "Originating job of a continue-series; a capped search and its continuations share it. Self for a standalone job"},
 						"error_code":  map[string]any{"type": "string"},
 						"error":       map[string]any{"type": "string"},
 						"items":       map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/Item"}},
@@ -225,6 +226,18 @@ func buildSpec(baseURL string) map[string]any {
 					"parameters":  []map[string]any{pathParam("id", "Job id")},
 					"responses": map[string]any{
 						"202": resp("Follow-up job queued for the next window", "#/components/schemas/EnqueueResponse"),
+						"404": resp("Job not found", "#/components/schemas/Error"),
+						"409": resp("Job was not capped, so there is no next window", "#/components/schemas/Error"),
+					},
+				},
+			},
+			"/api/v1/queue/{id}/continue-all": map[string]any{
+				"post": map[string]any{
+					"summary":     "Fetch every remaining window of a capped job",
+					"operationId": "continueAllJob",
+					"parameters":  []map[string]any{pathParam("id", "Job id")},
+					"responses": map[string]any{
+						"202": resp("First follow-up queued; the queue continues until the search runs short", "#/components/schemas/EnqueueResponse"),
 						"404": resp("Job not found", "#/components/schemas/Error"),
 						"409": resp("Job was not capped, so there is no next window", "#/components/schemas/Error"),
 					},

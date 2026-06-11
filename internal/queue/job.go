@@ -108,6 +108,13 @@ type Job struct {
 	// Offset skips this many leading posts before the job's window, so a
 	// continue on a capped search fetches the next batch via --range.
 	Offset int `json:"-"`
+	// Root is the originating job of a continue-series (a capped search and its
+	// continuations); the queue view and the extension group the windows that
+	// share it. A standalone job is its own root.
+	Root int64 `json:"root,omitempty"`
+	// Auto marks a window of a "fetch all" chain: when it comes back capped the
+	// queue enqueues the next window on its own, until a window returns short.
+	Auto bool `json:"-"`
 	// Force bypasses gallery-dl's download-archive on the next run so
 	// already-fetched posts are downloaded again. Set by a forced retry,
 	// e.g. to re-fetch an image deleted in monbooru.
@@ -179,6 +186,8 @@ func newJob(id int64, url string, opts Options, now time.Time) *Job {
 		Folder:    opts.Folder,
 		MaxItems:  opts.MaxItems,
 		Offset:    opts.Offset,
+		Root:      opts.Root,
+		Auto:      opts.Auto,
 		Priority:  opts.Priority,
 		CreatedAt: now,
 		done:      make(chan struct{}),
@@ -265,6 +274,24 @@ func (j *Job) ItemCount() int {
 	return len(j.Items)
 }
 
+// status reads the job's lifecycle state under the lock, for a queue scan that
+// needs a finished job's terminal status while holding the queue lock.
+func (j *Job) status() JobStatus {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.Status
+}
+
+// seriesKey identifies the continue-series a job belongs to. Root is set for
+// every job routed through Enqueue; the fallback covers a job built directly.
+// Both fields are immutable after creation, so no lock is taken.
+func (j *Job) seriesKey() int64 {
+	if j.Root != 0 {
+		return j.Root
+	}
+	return j.ID
+}
+
 // Fail records a job-level failure (e.g. the resolve pass errored) and
 // transitions to failed. Any non-terminal items are marked failed with the
 // same code so the summary reflects the abort.
@@ -310,8 +337,9 @@ func (j *Job) cancel(now time.Time) {
 }
 
 // reset returns a finished job to the queued state for Retry, clearing the
-// prior run's items, summary, error, and timestamps and re-arming done. force
-// sets whether the re-run bypasses the download-archive.
+// prior run's items, summary, error, and timestamps and re-arming done. The
+// re-run bypasses the download-archive when force is set or the prior run did
+// not fully import (failed or partial).
 func (j *Job) reset(force bool) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -319,7 +347,10 @@ func (j *Job) reset(force bool) error {
 		return fmt.Errorf("cannot retry a %s job", j.Status)
 	}
 	j.priorItems = priorImports(j.Items)
-	j.Force = force
+	// A job that did not fully import has items whose download landed in the
+	// archive but whose push never reached monbooru; retrying past the archive
+	// re-downloads and re-pushes them instead of archive-skipping them.
+	j.Force = force || j.Status == JobFailed || j.Status == JobPartial
 	j.Status = JobQueued
 	j.Items = nil
 	j.Summary = Summary{}
@@ -395,6 +426,8 @@ func (j *Job) Snapshot() *Job {
 		Folder:     j.Folder,
 		MaxItems:   j.MaxItems,
 		Offset:     j.Offset,
+		Root:       j.Root,
+		Auto:       j.Auto,
 		Force:      j.Force,
 		Priority:   j.Priority,
 		Summary:    j.Summary,

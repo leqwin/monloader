@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/leqwin/monloader/internal/config"
@@ -95,6 +96,35 @@ func TestPushImageCreatedBareBody(t *testing.T) {
 	var tags []string
 	if err := json.Unmarshal([]byte(gotTags), &tags); err != nil || len(tags) != 3 {
 		t.Errorf("tags field = %q, want a 3-element JSON array", gotTags)
+	}
+}
+
+func TestPushImageCapsLongFields(t *testing.T) {
+	var gotSource, gotURL string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(32 << 20); err != nil {
+			t.Errorf("ParseMultipartForm: %v", err)
+		}
+		gotSource = r.FormValue("source")
+		gotURL = r.FormValue("url")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
+	}))
+	defer srv.Close()
+
+	meta := PushMeta{
+		Filename: "f.jpg",
+		Source:   strings.Repeat("s", maxSourceLen+50),
+		URL:      "https://cdn.example.com/f.jpg?sig=" + strings.Repeat("a", maxURLLen),
+	}
+	if _, err := testClient(srv.URL, "tok").PushImage(context.Background(), []byte("x"), meta, "g"); err != nil {
+		t.Fatalf("PushImage: %v", err)
+	}
+	if len(gotSource) != maxSourceLen {
+		t.Errorf("source len = %d, want %d (trimmed to monbooru's cap)", len(gotSource), maxSourceLen)
+	}
+	if len(gotURL) != maxURLLen {
+		t.Errorf("url len = %d, want %d (trimmed to monbooru's cap)", len(gotURL), maxURLLen)
 	}
 }
 
@@ -259,18 +289,22 @@ func TestListGalleries(t *testing.T) {
 
 func TestConnection(t *testing.T) {
 	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]string{"api": "monbooru"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"api": "monbooru", "version": "v1.2.3"})
 	}))
 	defer ok.Close()
-	if err := testClient(ok.URL, "tok").TestConnection(context.Background()); err != nil {
+	version, err := testClient(ok.URL, "tok").TestConnection(context.Background())
+	if err != nil {
 		t.Errorf("TestConnection on a healthy server: %v", err)
+	}
+	if version != "v1.2.3" {
+		t.Errorf("version = %q, want v1.2.3", version)
 	}
 
 	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer bad.Close()
-	if err := testClient(bad.URL, "wrong").TestConnection(context.Background()); err == nil {
+	if _, err := testClient(bad.URL, "wrong").TestConnection(context.Background()); err == nil {
 		t.Error("TestConnection should fail on 401")
 	}
 }

@@ -35,7 +35,8 @@ func (f fakeRunner) Version(context.Context) string                          { r
 type fakeProc struct{}
 
 func (fakeProc) Process(ctx context.Context, job *queue.Job) error {
-	url := job.Snapshot().URL
+	snap := job.Snapshot()
+	url := snap.URL
 	job.SetItems([]queue.Item{{PostID: "1"}})
 	switch {
 	case strings.Contains(url, "cap"):
@@ -46,7 +47,10 @@ func (fakeProc) Process(ctx context.Context, job *queue.Job) error {
 			it.Outcome = queue.OutcomeCreated
 			it.MonbooruID = 99
 		})
-		job.SetCapped(1)
+		// Cap only the first window so a fetch-all chain terminates.
+		if snap.Offset == 0 {
+			job.SetCapped(1)
+		}
 	case strings.Contains(url, "dup"):
 		job.UpdateItem(0, func(it *queue.Item) { it.Status = queue.ItemDownloaded })
 		job.UpdateItem(0, func(it *queue.Item) { it.Status = queue.ItemUploaded })
@@ -309,6 +313,55 @@ func TestContinueJob(t *testing.T) {
 	}
 	if r, _ := doJSON(t, "POST", srv.URL+"/api/v1/queue/99999/continue", "", ""); r.StatusCode != http.StatusNotFound {
 		t.Errorf("continue on unknown id = %d, want 404", r.StatusCode)
+	}
+}
+
+// TestContinueAllJob checks the fetch-all endpoint queues the next window and
+// rejects a job that was never capped.
+func TestContinueAllJob(t *testing.T) {
+	srv := newTestServer(t, "")
+
+	_, job := doJSON(t, "POST", srv.URL+"/api/v1/queue?wait=5", "", `{"url":"http://x/cap"}`)
+	id := int64(job["id"].(float64))
+	resp, body := doJSON(t, "POST", srv.URL+"/api/v1/queue/"+itoa(id)+"/continue-all", "", "")
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("continue-all status = %d, want 202", resp.StatusCode)
+	}
+	newID := int64(body["job_id"].(float64))
+	if newID == id {
+		t.Errorf("continue-all should return a new job id, got the source %d", id)
+	}
+	if r, _ := doJSON(t, "GET", srv.URL+"/api/v1/queue/"+itoa(newID), "", ""); r.StatusCode != 200 {
+		t.Errorf("fetch-all follow-up %d should exist, get status = %d", newID, r.StatusCode)
+	}
+
+	// A non-capped job has no next window (409); an unknown id is 404.
+	_, plain := doJSON(t, "POST", srv.URL+"/api/v1/queue?wait=5", "", `{"url":"http://x/ok"}`)
+	pid := int64(plain["id"].(float64))
+	if r, _ := doJSON(t, "POST", srv.URL+"/api/v1/queue/"+itoa(pid)+"/continue-all", "", ""); r.StatusCode != http.StatusConflict {
+		t.Errorf("continue-all on a non-capped job = %d, want 409", r.StatusCode)
+	}
+	if r, _ := doJSON(t, "POST", srv.URL+"/api/v1/queue/99999/continue-all", "", ""); r.StatusCode != http.StatusNotFound {
+		t.Errorf("continue-all on unknown id = %d, want 404", r.StatusCode)
+	}
+}
+
+// TestJobExposesSeriesRoot checks the queue JSON carries the series root so an
+// API consumer can collapse a capped search and its continuations.
+func TestJobExposesSeriesRoot(t *testing.T) {
+	srv := newTestServer(t, "")
+
+	_, job := doJSON(t, "POST", srv.URL+"/api/v1/queue?wait=5", "", `{"url":"http://x/cap"}`)
+	id := int64(job["id"].(float64))
+	if root, ok := job["root"].(float64); !ok || int64(root) != id {
+		t.Fatalf("a fresh job should expose root == id: id=%d root=%v", id, job["root"])
+	}
+
+	_, body := doJSON(t, "POST", srv.URL+"/api/v1/queue/"+itoa(id)+"/continue", "", "")
+	nid := int64(body["job_id"].(float64))
+	_, cont := doJSON(t, "GET", srv.URL+"/api/v1/queue/"+itoa(nid), "", "")
+	if root, ok := cont["root"].(float64); !ok || int64(root) != id {
+		t.Errorf("a continuation should carry the originating root %d, got %v", id, cont["root"])
 	}
 }
 

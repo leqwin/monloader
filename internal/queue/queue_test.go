@@ -301,6 +301,239 @@ func TestContinueEnqueuesNextWindow(t *testing.T) {
 	}
 }
 
+func TestContinueInheritsSeriesRoot(t *testing.T) {
+	q := New(noopProcessor{}, 1, 100)
+	id := q.Enqueue("http://x/search", Options{MaxItems: 50})
+	if first, _ := q.Get(id); first.Root != id {
+		t.Fatalf("a fresh job should be its own series root: Root=%d id=%d", first.Root, id)
+	}
+	q.index[id].SetCapped(50)
+	nid, _ := q.Continue(id)
+	q.index[nid].SetCapped(50)
+	n2, _ := q.Continue(nid)
+	for _, child := range []int64{nid, n2} {
+		if c, _ := q.Get(child); c.Root != id {
+			t.Errorf("continuation %d Root = %d, want originating id %d", child, c.Root, id)
+		}
+	}
+}
+
+func TestCancelSeriesRemovesEveryWindow(t *testing.T) {
+	q := New(noopProcessor{}, 1, 100)
+	id := q.Enqueue("http://x/search", Options{MaxItems: 50})
+	q.index[id].SetCapped(50)
+	n1, _ := q.Continue(id)
+	q.index[n1].SetCapped(50)
+	n2, _ := q.Continue(n1)
+	other := q.Enqueue("http://y/search", Options{}) // a separate series must survive
+
+	if err := q.CancelSeries(n1); err != nil {
+		t.Fatalf("CancelSeries: %v", err)
+	}
+	for _, gone := range []int64{id, n1, n2} {
+		if _, err := q.Get(gone); err != ErrNotFound {
+			t.Errorf("series member %d still present after CancelSeries", gone)
+		}
+	}
+	if _, err := q.Get(other); err != nil {
+		t.Errorf("unrelated job %d should survive CancelSeries: %v", other, err)
+	}
+	if err := q.CancelSeries(404); err != ErrNotFound {
+		t.Errorf("CancelSeries(unknown) = %v, want ErrNotFound", err)
+	}
+}
+
+// haltProc finishes the first window (offset 0) with one created item and caps
+// it, then blocks every later window on its context, so a series can hold a
+// finished window and a running window at once.
+type haltProc struct{ running chan int64 }
+
+func (p haltProc) Process(ctx context.Context, job *Job) error {
+	s := job.Snapshot()
+	job.SetItems([]Item{{PostID: "p"}})
+	if s.Offset == 0 {
+		job.UpdateItem(0, func(it *Item) { it.Status = ItemDownloaded })
+		job.UpdateItem(0, func(it *Item) { it.Status = ItemUploaded })
+		job.UpdateItem(0, func(it *Item) { it.Status = ItemDone; it.Outcome = OutcomeCreated })
+		job.SetCapped(50)
+		return nil
+	}
+	p.running <- s.ID
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// TestCancelSeriesKeepsFinishedWindows checks that canceling an in-flight
+// continuation stops it but keeps the already-finished window's imported items,
+// rather than dropping the whole series.
+func TestCancelSeriesKeepsFinishedWindows(t *testing.T) {
+	running := make(chan int64, 1)
+	q := New(haltProc{running: running}, 1, 100)
+	q.Start()
+	defer q.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	id := q.Enqueue("http://x/search", Options{MaxItems: 50})
+	if _, err := q.Wait(ctx, id); err != nil {
+		t.Fatalf("wait first window: %v", err)
+	}
+	nid, err := q.Continue(id)
+	if err != nil {
+		t.Fatalf("continue: %v", err)
+	}
+	<-running // the continuation is now running and blocked on its context
+
+	if err := q.CancelSeries(nid); err != nil {
+		t.Fatalf("CancelSeries: %v", err)
+	}
+
+	// The finished window survives with its imported item.
+	first, err := q.Get(id)
+	if err != nil {
+		t.Fatalf("the finished window should survive a live cancel: %v", err)
+	}
+	if first.Summary.Created != 1 {
+		t.Errorf("finished window lost its imported item: summary=%+v", first.Summary)
+	}
+	// The in-flight window is canceled and stays in history.
+	if _, err := q.Wait(ctx, nid); err != nil {
+		t.Fatalf("wait canceled window: %v", err)
+	}
+	if cw, _ := q.Get(nid); cw.Status != JobCanceled {
+		t.Errorf("the in-flight window should be canceled, got %s", cw.Status)
+	}
+}
+
+func TestAutoContinueChainsCappedWindows(t *testing.T) {
+	q := New(noopProcessor{}, 1, 100) // not started; drive autoContinue directly
+	count := func() int { j, _ := q.List(ListOptions{}); return len(j) }
+
+	// A capped auto window enqueues the next auto window, carrying the offset
+	// and the series root.
+	id := q.Enqueue("http://x/search", Options{MaxItems: 50, Auto: true})
+	q.index[id].SetCapped(50)
+	q.index[id].Finalize(time.Now()) // a window chains only after finishing normally
+	q.autoContinue(q.index[id])
+	if count() != 2 {
+		t.Fatalf("a capped auto window should chain one window, got %d jobs", count())
+	}
+	jobs, _ := q.List(ListOptions{})
+	var next *Job
+	for _, j := range jobs {
+		if j.ID != id {
+			next = j
+		}
+	}
+	if next.Offset != 50 || next.Root != id || !next.Auto {
+		t.Errorf("chained window = {offset:%d root:%d auto:%v}, want {50,%d,true}", next.Offset, next.Root, next.Auto, id)
+	}
+
+	// A window short of the cap is not capped, so the chain ends.
+	short := q.Enqueue("http://x/search", Options{MaxItems: 50, Auto: true})
+	n := count()
+	q.autoContinue(q.index[short])
+	if count() != n {
+		t.Errorf("a non-capped window must not chain: %d -> %d", n, count())
+	}
+
+	// A capped but non-auto window does not chain on its own.
+	manual := q.Enqueue("http://x/search", Options{MaxItems: 50})
+	q.index[manual].SetCapped(50)
+	n = count()
+	q.autoContinue(q.index[manual])
+	if count() != n {
+		t.Errorf("a non-auto window must not chain: %d -> %d", n, count())
+	}
+}
+
+func TestAutoContinueStopsOnCancelOrFailure(t *testing.T) {
+	q := New(noopProcessor{}, 1, 100)
+	count := func() int { j, _ := q.List(ListOptions{}); return len(j) }
+
+	// A window keeps the capped flag its resolve set even when the download is
+	// then canceled or fails, so the terminal status must stop the chain.
+	canceled := q.Enqueue("http://x/search", Options{MaxItems: 50, Auto: true})
+	q.index[canceled].SetCapped(50)
+	q.index[canceled].cancel(time.Now())
+	n := count()
+	q.autoContinue(q.index[canceled])
+	if count() != n {
+		t.Errorf("a canceled auto window must not keep fetching: %d -> %d", n, count())
+	}
+
+	failed := q.Enqueue("http://x/search", Options{MaxItems: 50, Auto: true})
+	q.index[failed].SetCapped(50)
+	q.index[failed].Fail(ErrCodeDownloadFailed, "boom", time.Now())
+	n = count()
+	q.autoContinue(q.index[failed])
+	if count() != n {
+		t.Errorf("a failed auto window must not keep fetching: %d -> %d", n, count())
+	}
+}
+
+// capUntilProc caps every window whose offset is at or below maxOffset, so a
+// fetch-all chain runs a known number of windows and then stops.
+type capUntilProc struct{ maxOffset int }
+
+func (p capUntilProc) Process(_ context.Context, job *Job) error {
+	s := job.Snapshot()
+	job.SetItems([]Item{{PostID: "p"}})
+	if s.Offset <= p.maxOffset {
+		job.SetCapped(50)
+	}
+	return nil
+}
+
+func TestFetchAllRunsChainToExhaustion(t *testing.T) {
+	q := New(capUntilProc{maxOffset: 50}, 1, 100) // caps offsets 0 and 50, then runs short
+	q.Start()
+	defer q.Close()
+
+	id := q.Enqueue("http://x/search", Options{MaxItems: 50})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := q.Wait(ctx, id); err != nil {
+		t.Fatalf("wait first window: %v", err)
+	}
+	if _, err := q.ContinueAll(id); err != nil {
+		t.Fatalf("ContinueAll: %v", err)
+	}
+
+	settled := func() bool {
+		jobs, _ := q.List(ListOptions{})
+		if len(jobs) != 3 {
+			return false
+		}
+		for _, j := range jobs {
+			if j.Status == JobQueued || j.Status == JobRunning {
+				return false
+			}
+		}
+		return true
+	}
+	for deadline := time.Now().Add(2 * time.Second); !settled() && time.Now().Before(deadline); {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	jobs, _ := q.List(ListOptions{})
+	if len(jobs) != 3 {
+		t.Fatalf("fetch-all should stop after the short window: got %d windows", len(jobs))
+	}
+	offsets := map[int]bool{}
+	for _, j := range jobs {
+		offsets[j.Offset] = true
+		if j.Root != id {
+			t.Errorf("window %d Root = %d, want series %d", j.ID, j.Root, id)
+		}
+	}
+	for _, want := range []int{0, 50, 100} {
+		if !offsets[want] {
+			t.Errorf("missing window at offset %d; got offsets %v", want, offsets)
+		}
+	}
+}
+
 func TestCancelRemovesPendingJob(t *testing.T) {
 	q := New(noopProcessor{}, 1, 100) // not started: the job stays pending
 	id := q.Enqueue("http://x", Options{})

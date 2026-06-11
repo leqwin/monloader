@@ -27,6 +27,12 @@ type Options struct {
 	// Offset skips this many leading posts, so a continued capped search fetches
 	// the next window rather than re-resolving from the start.
 	Offset int
+	// Root ties a continuation to its originating job's series; zero starts a
+	// new series (the queue fills it with the new job's id).
+	Root int64
+	// Auto chains a "fetch all" run: a capped auto window enqueues the next one
+	// itself until the source runs short.
+	Auto bool
 	// Priority marks a single-post / wait request so it jumps ahead of bulk
 	// jobs in the FIFO.
 	Priority bool
@@ -102,6 +108,15 @@ func (q *Queue) Enqueue(url string, opts Options) int64 {
 	q.nextID++
 	id := q.nextID
 	j := newJob(id, url, opts, q.now())
+	if j.Root == 0 {
+		j.Root = id
+	}
+	// A fresh add (not a continuation) of a URL a recent job failed to fully
+	// import re-downloads past the archive, so a post whose push failed before is
+	// re-pushed rather than archive-skipped - the recovery a retry already does.
+	if opts.Root == 0 && q.lastRunUnimportedLocked(url) {
+		j.Force = true
+	}
 	q.index[id] = j
 	q.pushPendingLocked(j)
 	q.cond.Broadcast()
@@ -188,7 +203,14 @@ func (q *Queue) Retry(id int64, force bool) error {
 // Continue enqueues a follow-up job for the window after a capped job's, so the
 // next batch of a truncated search comes down without re-resolving the part
 // already fetched. It returns the new job id; the source must have been capped.
-func (q *Queue) Continue(id int64) (int64, error) {
+func (q *Queue) Continue(id int64) (int64, error) { return q.continueFrom(id, false) }
+
+// ContinueAll is Continue marked auto: the queue keeps fetching each next
+// window as one comes back capped, until a window returns short of the cap - a
+// one-click "fetch the rest" past the per-job cap.
+func (q *Queue) ContinueAll(id int64) (int64, error) { return q.continueFrom(id, true) }
+
+func (q *Queue) continueFrom(id int64, auto bool) (int64, error) {
 	src, err := q.Get(id)
 	if err != nil {
 		return 0, err
@@ -201,7 +223,71 @@ func (q *Queue) Continue(id int64) (int64, error) {
 		Folder:   src.Folder,
 		MaxItems: src.Cap,
 		Offset:   src.Offset + src.Cap,
+		Root:     src.seriesKey(),
+		Auto:     auto,
 	}), nil
+}
+
+// autoContinue advances a fetch-all chain once a window finishes: a capped auto
+// window means more remain, so enqueue the next (also auto). The chain ends when
+// a window comes back short of the cap, or when the user cancels or the window
+// fails - a window keeps the capped flag its resolve set even if the download is
+// then canceled, so the terminal status, not the flag alone, decides the next hop.
+func (q *Queue) autoContinue(j *Job) {
+	s := j.Snapshot()
+	if !s.Auto || !s.Capped {
+		return
+	}
+	if s.Status != JobSucceeded && s.Status != JobPartial {
+		return
+	}
+	_, _ = q.continueFrom(s.ID, true)
+}
+
+// CancelSeries stops id's continue-series (the originating capped job and its
+// continuations), so the collapsed queue row acts on them as one unit. A live
+// cancel - the clicked window is still queued or running - stops the in-flight
+// and pending windows but leaves the windows that already finished, so their
+// imported items stay in the history; once every window has finished, a remove
+// drops the whole series.
+func (q *Queue) CancelSeries(id int64) error {
+	q.mu.Lock()
+	src := q.index[id]
+	if src == nil {
+		q.mu.Unlock()
+		return ErrNotFound
+	}
+	root := src.seriesKey()
+	live := q.isLiveLocked(id)
+	var ids []int64
+	for jid, j := range q.index {
+		if j.seriesKey() != root {
+			continue
+		}
+		if live && !q.isLiveLocked(jid) {
+			continue // keep an already-finished window when stopping an ongoing series
+		}
+		ids = append(ids, jid)
+	}
+	q.mu.Unlock()
+	for _, jid := range ids {
+		_ = q.Cancel(jid)
+	}
+	return nil
+}
+
+// isLiveLocked reports whether the job is still queued or running, i.e. not yet
+// moved to the finished ring. Caller holds mu.
+func (q *Queue) isLiveLocked(id int64) bool {
+	if _, ok := q.running[id]; ok {
+		return true
+	}
+	for _, j := range q.pending {
+		if j.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // Cancel implements the DELETE contract: a running job is
@@ -278,6 +364,21 @@ func (q *Queue) removeFromPendingLocked(id int64) {
 			return
 		}
 	}
+}
+
+// lastRunUnimportedLocked reports whether the most recent finished job for url
+// did not fully import (failed or partial), so its posts may sit in gallery-dl's
+// archive without having reached monbooru. Caller holds mu.
+func (q *Queue) lastRunUnimportedLocked(url string) bool {
+	unimported := false
+	for _, j := range q.finished {
+		if j.URL != url {
+			continue
+		}
+		st := j.status()
+		unimported = st == JobFailed || st == JobPartial
+	}
+	return unimported
 }
 
 func (q *Queue) removeFromFinishedLocked(id int64) {

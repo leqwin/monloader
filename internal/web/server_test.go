@@ -52,7 +52,7 @@ func monbooruStub() *httptest.Server {
 		case "/api/v1/galleries":
 			_, _ = w.Write([]byte(`[{"name":"default","images":3,"tags":2,"active":true}]`))
 		default:
-			_, _ = w.Write([]byte(`{"api":"monbooru"}`))
+			_, _ = w.Write([]byte(`{"api":"monbooru","version":"v9.9.9"}`))
 		}
 	}))
 }
@@ -196,6 +196,48 @@ func TestEnqueueViaForm(t *testing.T) {
 	}
 }
 
+// Adding from the queue screen refreshes the rows in place instead of
+// redirecting, so a full-page reload does not drop the operator's collapse
+// state.
+func TestEnqueueFromQueueRefreshesInPlace(t *testing.T) {
+	mb := monbooruStub()
+	defer mb.Close()
+	web := newWebServer(t, mb.URL, "")
+	ts := httptest.NewServer(web.Handler())
+	defer ts.Close()
+
+	_, body := get(t, ts, "/queue")
+	m := csrfRe.FindStringSubmatch(body)
+	if m == nil {
+		t.Fatal("no CSRF token in the add form")
+	}
+	// The form clears itself after an in-place add (but not on a validation
+	// error); the handler must render verbatim, quotes unescaped.
+	if !strings.Contains(body, "getResponseHeader('HX-Retarget')) this.reset()") {
+		t.Error("the queue add form should reset after an in-place add")
+	}
+
+	form := url.Values{"_csrf": {m[1]}, "url": {"https://example.com/posts/1"}}
+	req, _ := http.NewRequest("POST", ts.URL+"/", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Current-URL", ts.URL+"/queue")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if loc := resp.Header.Get("HX-Redirect"); loc != "" {
+		t.Errorf("queue-screen add should not redirect, got HX-Redirect %q", loc)
+	}
+	if tgt := resp.Header.Get("HX-Retarget"); tgt != "#queue-rows" {
+		t.Errorf("queue-screen add should retarget #queue-rows, got %q", tgt)
+	}
+	if b := readBody(t, resp); !strings.Contains(b, "example.com/posts/1") {
+		t.Errorf("in-place refresh should render the new job row, got %q", b)
+	}
+}
+
 func TestCSRFRejectsMissingToken(t *testing.T) {
 	mb := monbooruStub()
 	defer mb.Close()
@@ -238,6 +280,8 @@ func TestConnLight(t *testing.T) {
 	defer up.Close()
 	if _, body := get(t, up, "/internal/monbooru-status"); !strings.Contains(body, "dot-ok") {
 		t.Errorf("reachable monbooru should render a green dot, got %q", body)
+	} else if !strings.Contains(body, "connected to monbooru v9.9.9") {
+		t.Errorf("reachable monbooru should show the reported version, got %q", body)
 	}
 
 	// Point a fresh server at a closed monbooru to get the red dot.

@@ -341,6 +341,9 @@ func TestWriteManagedConfig(t *testing.T) {
 	if ext["sleep-request"] != 1.5 {
 		t.Errorf("sleep-request = %v, want 1.5", ext["sleep-request"])
 	}
+	if ext["sleep"] != 1.5 {
+		t.Errorf("sleep = %v, want 1.5 (throttle file downloads, not just listing)", ext["sleep"])
+	}
 	if ext["timeout"] != float64(30) {
 		t.Errorf("raw top-level extractor.timeout not merged: %v", ext["timeout"])
 	}

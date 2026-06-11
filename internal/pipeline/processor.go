@@ -553,12 +553,20 @@ func recordSuccess(job *queue.Job, i int, res *monbooru.Result) {
 }
 
 func failItem(job *queue.Job, i int, code, msg string) {
+	post := strconv.Itoa(i)
 	job.UpdateItem(i, func(it *queue.Item) {
 		it.Status = queue.ItemFailed
 		it.Outcome = queue.OutcomeFailed
 		it.ErrorCode = code
 		it.Error = msg
+		if it.PostID != "" {
+			post = it.PostID
+			if it.Num > 0 {
+				post = fmt.Sprintf("%s#%d", it.PostID, it.Num)
+			}
+		}
 	})
+	logx.Warnf("queue: job %d item %s failed: %s", job.ID, post, msg)
 }
 
 // buildCBZFile writes the ordered page files into a zip at dest (the .cbz

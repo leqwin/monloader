@@ -2,6 +2,7 @@ services:
   monloader:
     image: ghcr.io/leqwin/monloader:latest
     container_name: monloader
+    # Image runs as uid/gid 1000; set this to your host uid:gid.
     user: "1000:1000"
     ports:
       - "127.0.0.1:8081:8081"
@@ -11,17 +12,9 @@ services:
       - ALL
     volumes:
       - /path/to/monloader/config:/config
-
     environment:
       - MONLOADER_SERVER_BIND_ADDRESS=0.0.0.0:8081
       # The monbooru instance to push into
       - MONLOADER_MONBOORU_API_URL=http://monbooru:8080
       - MONLOADER_MONBOORU_API_TOKEN=${MONBOORU_API_TOKEN}
-
-    healthcheck:
-      test: ["CMD-SHELL", "curl --fail --silent --max-time 5 http://localhost:8081/health || exit 1"]
-      interval: 30s
-      retries: 3
-      start_period: 10s
-      timeout: 5s
     restart: unless-stopped

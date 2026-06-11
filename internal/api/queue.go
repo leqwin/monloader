@@ -158,6 +158,26 @@ func (h *Handler) continueJob(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{"job_id": newID})
 }
 
+// continueAllJob handles POST /api/v1/queue/{id}/continue-all. It queues the
+// next window and keeps fetching each following one until the capped search
+// runs short, returning the first follow-up job's id.
+func (h *Handler) continueAllJob(w http.ResponseWriter, r *http.Request) {
+	id, ok := apiPathInt64(w, r, "id")
+	if !ok {
+		return
+	}
+	newID, err := h.queue.ContinueAll(id)
+	if err != nil {
+		if errors.Is(err, queue.ErrNotFound) {
+			apiError(w, http.StatusNotFound, "not_found", "job not found")
+			return
+		}
+		apiError(w, http.StatusConflict, "conflict", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"job_id": newID})
+}
+
 // deleteJob handles DELETE /api/v1/queue/{id}: cancels a running job, else
 // removes it.
 func (h *Handler) deleteJob(w http.ResponseWriter, r *http.Request) {

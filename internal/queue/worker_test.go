@@ -231,6 +231,117 @@ func TestRetryForcePropagates(t *testing.T) {
 	}
 }
 
+// TestRetryFailedJobForcesArchiveBypass checks that a plain retry of a job that
+// did not fully import re-runs past the download-archive (so a failed push is
+// re-downloaded rather than archive-skipped), while a retry of a fully
+// succeeded job runs against the archive as before.
+func TestRetryFailedJobForcesArchiveBypass(t *testing.T) {
+	var mu sync.Mutex
+	var seen []bool
+	var calls int32
+	q := New(procFunc(func(ctx context.Context, j *Job) error {
+		mu.Lock()
+		seen = append(seen, j.Snapshot().Force)
+		mu.Unlock()
+		j.SetItems([]Item{{PostID: "1"}})
+		if atomic.AddInt32(&calls, 1) == 1 {
+			j.UpdateItem(0, func(it *Item) {
+				it.Status = ItemFailed
+				it.Outcome = OutcomeFailed
+				it.ErrorCode = ErrCodeMonbooruRejected
+			})
+			return nil
+		}
+		createOne(j, 5)
+		return nil
+	}), 1, 100)
+	q.Start()
+	defer q.Close()
+
+	id := q.Enqueue("http://x", Options{})
+	if job := waitFor(t, q, id); job.Status != JobFailed {
+		t.Fatalf("first run status = %s, want failed", job.Status)
+	}
+
+	if err := q.Retry(id, false); err != nil {
+		t.Fatalf("Retry: %v", err)
+	}
+	if job := waitFor(t, q, id); job.Status != JobSucceeded || !job.Force {
+		t.Errorf("retry of failed job: status=%s force=%v, want succeeded/true", job.Status, job.Force)
+	}
+
+	if err := q.Retry(id, false); err != nil {
+		t.Fatalf("Retry: %v", err)
+	}
+	if job := waitFor(t, q, id); job.Force {
+		t.Error("retry of succeeded job force = true, want false")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []bool{false, true, false}
+	if len(seen) != len(want) {
+		t.Fatalf("processor saw runs %v, want %v", seen, want)
+	}
+	for i := range want {
+		if seen[i] != want[i] {
+			t.Errorf("run %d force = %v, want %v", i, seen[i], want[i])
+		}
+	}
+}
+
+// TestReaddOfFailedURLForcesArchiveBypass checks that a fresh add of a URL a
+// recent job failed to import re-runs past the archive, while a re-add after a
+// successful run, or of a URL with no failed history, does not.
+func TestReaddOfFailedURLForcesArchiveBypass(t *testing.T) {
+	var mu sync.Mutex
+	var seen []bool
+	var calls int32
+	q := New(procFunc(func(ctx context.Context, j *Job) error {
+		mu.Lock()
+		seen = append(seen, j.Snapshot().Force)
+		mu.Unlock()
+		j.SetItems([]Item{{PostID: "1"}})
+		if atomic.AddInt32(&calls, 1) == 1 {
+			j.UpdateItem(0, func(it *Item) {
+				it.Status = ItemFailed
+				it.Outcome = OutcomeFailed
+				it.ErrorCode = ErrCodeMonbooruRejected
+			})
+			return nil
+		}
+		createOne(j, 9)
+		return nil
+	}), 1, 100)
+	q.Start()
+	defer q.Close()
+
+	if job := waitFor(t, q, q.Enqueue("http://x", Options{})); job.Status != JobFailed {
+		t.Fatalf("first run status = %s, want failed", job.Status)
+	}
+	if job := waitFor(t, q, q.Enqueue("http://x", Options{})); job.Status != JobSucceeded || !job.Force {
+		t.Errorf("re-add of failed url: status=%s force=%v, want succeeded/true", job.Status, job.Force)
+	}
+	if job := waitFor(t, q, q.Enqueue("http://x", Options{})); job.Force {
+		t.Error("re-add after a successful run forced, want not forced")
+	}
+	if job := waitFor(t, q, q.Enqueue("http://y", Options{})); job.Force {
+		t.Error("re-add of a url with no failed history forced, want not forced")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []bool{false, true, false, false}
+	if len(seen) != len(want) {
+		t.Fatalf("processor saw runs %v, want %v", seen, want)
+	}
+	for i := range want {
+		if seen[i] != want[i] {
+			t.Errorf("run %d force = %v, want %v", i, seen[i], want[i])
+		}
+	}
+}
+
 func TestCancelStopsRunningJob(t *testing.T) {
 	started := make(chan struct{})
 	q := New(procFunc(func(ctx context.Context, j *Job) error {

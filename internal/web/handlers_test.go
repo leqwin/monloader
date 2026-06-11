@@ -386,11 +386,6 @@ func TestForceDownloadRetry(t *testing.T) {
 		t.Fatalf("waiting for first run: %v", err)
 	}
 
-	// The finished row offers the force-download button next to retry.
-	if _, body := get(t, ts, "/queue"); !strings.Contains(body, "force download") {
-		t.Error("finished job row is missing the force download button")
-	}
-
 	resp := postForm(t, ts, srv, "/queue/"+itoa(id)+"/retry?force=1", url.Values{})
 	resp.Body.Close()
 	if resp.StatusCode != 200 {

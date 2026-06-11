@@ -15,11 +15,12 @@ go build -o monloader ./cmd/monloader
 `VERSION.md` and `REPOSITORY.md`), which feed the footer and `/health`. A plain
 `go build` reports `dev`.
 
-## CLI flags
+## CLI flags and subcommands
 
 - `-config` - path to the TOML config file (default `./monloader.toml`).
 - `-hash-password '...'` - print a bcrypt hash for the UI password and exit.
 - `-version` - print the version and exit.
+- `healthcheck` - probe the local `/health` endpoint.
 
 ## gallery-dl
 

@@ -37,7 +37,10 @@ func WriteManagedConfig(cfg *config.Config, flatTagSites []string) error {
 		extractor["archive"] = cfg.GalleryDL.ArchivePath
 	}
 	if cfg.GalleryDL.SleepRequest > 0 {
+		// sleep-request throttles extractor (listing) requests; sleep throttles
+		// each file download, so a page of many files is not fetched in a burst.
 		extractor["sleep-request"] = cfg.GalleryDL.SleepRequest
+		extractor["sleep"] = cfg.GalleryDL.SleepRequest
 	}
 
 	// Every flat-tag family gets tags:true so its per-category tags appear,

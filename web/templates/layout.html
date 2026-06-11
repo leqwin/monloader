@@ -20,6 +20,7 @@
     <nav>
       <a href="/queue" {{if eq .ActiveNav "queue"}}class="active"{{end}}>queue</a>
       <a href="/settings" {{if eq .ActiveNav "settings"}}class="active"{{end}}>settings</a>
+      {{if .MonbooruWebURL}}<span class="nav-sep"></span><a href="{{.MonbooruWebURL}}" target="_blank" rel="noopener">Go to monbooru</a>{{end}}
     </nav>
     {{if .AuthEnabled}}
     <div id="topbar-right">
@@ -40,6 +41,13 @@
 {{end}}
 
 {{define "doc_foot"}}
+<dialog id="confirm-dialog">
+  <p id="confirm-dialog-msg"></p>
+  <div class="dialog-actions">
+    <button type="button" id="confirm-dialog-cancel">cancel</button>
+    <button type="button" id="confirm-dialog-ok">ok</button>
+  </div>
+</dialog>
 </body>
 </html>
 {{end}}
