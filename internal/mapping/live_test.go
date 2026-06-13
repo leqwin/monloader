@@ -78,8 +78,8 @@ func TestLiveMappingDanbooru(t *testing.T) {
 	if pf.Source != "danbooru" {
 		t.Errorf("source = %q, want danbooru", pf.Source)
 	}
-	if !strings.HasPrefix(pf.URL, "https://danbooru.donmai.us/posts/") {
-		t.Errorf("url = %q, want the danbooru post-url template", pf.URL)
+	if u := mapper.PostURL(meta); !strings.HasPrefix(u, "https://danbooru.donmai.us/posts/") {
+		t.Errorf("url = %q, want the danbooru post-url template", u)
 	}
 	if len(pf.Tags) == 0 {
 		t.Error("mapped post produced no tags")
@@ -102,8 +102,8 @@ func TestLiveMappingDirectlink(t *testing.T) {
 	if pf.Source != "en.wikipedia.org" {
 		t.Errorf("source = %q, want the file host", pf.Source)
 	}
-	if pf.URL != fileURL {
-		t.Errorf("url = %q, want the file URL %q", pf.URL, fileURL)
+	if u := mapper.PostURL(meta); u != fileURL {
+		t.Errorf("url = %q, want the file URL %q", u, fileURL)
 	}
 }
 
@@ -120,8 +120,8 @@ func TestLiveMappingSafebooru(t *testing.T) {
 	if pf.Source != "safebooru" {
 		t.Errorf("source = %q, want safebooru", pf.Source)
 	}
-	if !strings.HasPrefix(pf.URL, "https://safebooru.org/index.php?page=post&s=view&id=") {
-		t.Errorf("url = %q, want the safebooru post-url template", pf.URL)
+	if u := mapper.PostURL(meta); !strings.HasPrefix(u, "https://safebooru.org/index.php?page=post&s=view&id=") {
+		t.Errorf("url = %q, want the safebooru post-url template", u)
 	}
 	if len(pf.Tags) == 0 {
 		t.Error("mapped post produced no tags")
@@ -146,8 +146,8 @@ func TestLiveMappingE621(t *testing.T) {
 	if pf.Source != "e621" {
 		t.Errorf("source = %q, want e621", pf.Source)
 	}
-	if !strings.HasPrefix(pf.URL, "https://e621.net/posts/") {
-		t.Errorf("url = %q, want the e621 post-url template", pf.URL)
+	if u := mapper.PostURL(meta); !strings.HasPrefix(u, "https://e621.net/posts/") {
+		t.Errorf("url = %q, want the e621 post-url template", u)
 	}
 	if len(pf.Tags) == 0 {
 		t.Error("mapped post produced no tags")
@@ -169,8 +169,8 @@ func TestLiveMappingMoebooru(t *testing.T) {
 	if pf.Source != "konachan" {
 		t.Errorf("source = %q, want konachan", pf.Source)
 	}
-	if !strings.HasPrefix(pf.URL, "https://konachan.com/post/show/") {
-		t.Errorf("url = %q, want the konachan post-url template", pf.URL)
+	if u := mapper.PostURL(meta); !strings.HasPrefix(u, "https://konachan.com/post/show/") {
+		t.Errorf("url = %q, want the konachan post-url template", u)
 	}
 	if len(pf.Tags) == 0 {
 		t.Error("mapped post produced no tags")
@@ -190,8 +190,8 @@ func TestLiveMappingPhilomena(t *testing.T) {
 	if pf.Source != "derpibooru" {
 		t.Errorf("source = %q, want derpibooru", pf.Source)
 	}
-	if !strings.HasPrefix(pf.URL, "https://derpibooru.org/images/") {
-		t.Errorf("url = %q, want the derpibooru post-url template", pf.URL)
+	if u := mapper.PostURL(meta); !strings.HasPrefix(u, "https://derpibooru.org/images/") {
+		t.Errorf("url = %q, want the derpibooru post-url template", u)
 	}
 	if len(pf.Tags) == 0 {
 		t.Error("mapped post produced no tags")

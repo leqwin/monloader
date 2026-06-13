@@ -103,7 +103,7 @@ func buildSpec(baseURL string) map[string]any {
 						"subcategory": map[string]any{"type": "string"},
 						"example":     map[string]any{"type": "string"},
 						"curated":     map[string]any{"type": "boolean", "description": "Has a built-in mapping profile"},
-						"auth":        map[string]any{"type": "string", "description": "none, api_optional, api_required, cookies, oauth"},
+						"auth":        map[string]any{"type": "string", "description": "none, api_optional, api_required, cookies"},
 					},
 				},
 				"ProbeResult": map[string]any{
@@ -168,7 +168,7 @@ func buildSpec(baseURL string) map[string]any {
 					"responses": map[string]any{
 						"200": resp("Resolved job (only when wait elapsed in time)", "#/components/schemas/Job"),
 						"202": resp("Job accepted; poll GET /api/v1/queue/{id}", "#/components/schemas/EnqueueResponse"),
-						"400": resp("Missing url or negative max_items", "#/components/schemas/Error"),
+						"400": resp("Missing or non-http(s) url, or negative max_items", "#/components/schemas/Error"),
 					},
 				},
 				"get": map[string]any{
@@ -181,6 +181,7 @@ func buildSpec(baseURL string) map[string]any {
 					},
 					"responses": map[string]any{
 						"200": resp("Paginated job list", "#/components/schemas/PaginatedJobs"),
+						"400": resp("Unknown status filter", "#/components/schemas/Error"),
 					},
 				},
 			},

@@ -21,7 +21,8 @@ func newMapper(t *testing.T, cfg *config.Config) *Mapper {
 }
 
 func TestMapDanbooruPost(t *testing.T) {
-	pf := newMapper(t, nil).Map(map[string]any{
+	m := newMapper(t, nil)
+	meta := map[string]any{
 		"category":       "danbooru",
 		"id":             float64(11474309),
 		"rating":         "g",
@@ -29,7 +30,8 @@ func TestMapDanbooruPost(t *testing.T) {
 		"tags_artist":    []any{"paruperu"},
 		"tags_copyright": []any{"original"},
 		"tags_meta":      []any{"highres", "absurdres"},
-	})
+	}
+	pf := m.Map(meta)
 	wantTags := []string{
 		"1girl", "artist:paruperu", "copyright:original", "landscape",
 		"meta:absurdres", "meta:highres", "outdoors", "rating:general", "sky",
@@ -43,14 +45,14 @@ func TestMapDanbooruPost(t *testing.T) {
 	if pf.Source != "danbooru" {
 		t.Errorf("source = %q, want danbooru", pf.Source)
 	}
-	if pf.URL != "https://danbooru.donmai.us/posts/11474309" {
-		t.Errorf("url = %q", pf.URL)
+	if u := m.PostURL(meta); u != "https://danbooru.donmai.us/posts/11474309" {
+		t.Errorf("url = %q", u)
 	}
 	if pf.Via != "monloader" {
 		t.Errorf("via = %q, want monloader", pf.Via)
 	}
-	if pf.Gallery != "default" {
-		t.Errorf("gallery = %q, want default", pf.Gallery)
+	if g := m.Gallery("danbooru"); g != "" {
+		t.Errorf("gallery = %q, want empty (unset default)", g)
 	}
 }
 
@@ -96,14 +98,16 @@ func TestMapE621SafeOverloadAndSuffixes(t *testing.T) {
 }
 
 func TestMapMoebooruStringTags(t *testing.T) {
-	pf := newMapper(t, nil).Map(map[string]any{
+	m := newMapper(t, nil)
+	meta := map[string]any{
 		"category":       "konachan",
 		"id":             float64(345678),
 		"rating":         "q",
 		"tags_general":   "landscape scenery cloud no_humans",
 		"tags_artist":    "scenicartist",
 		"tags_copyright": "original",
-	})
+	}
+	pf := m.Map(meta)
 	if pf.Rating != RatingQuestionable {
 		t.Errorf("konachan rating q = %q, want questionable", pf.Rating)
 	}
@@ -113,8 +117,8 @@ func TestMapMoebooruStringTags(t *testing.T) {
 			t.Errorf("missing %q in %v", tag, pf.Tags)
 		}
 	}
-	if pf.URL != "https://konachan.com/post/show/345678" {
-		t.Errorf("url = %q", pf.URL)
+	if u := m.PostURL(meta); u != "https://konachan.com/post/show/345678" {
+		t.Errorf("url = %q", u)
 	}
 }
 
@@ -197,7 +201,8 @@ func TestPoolName(t *testing.T) {
 }
 
 func TestMapNhentaiGallery(t *testing.T) {
-	pf := newMapper(t, nil).Map(map[string]any{
+	m := newMapper(t, nil)
+	meta := map[string]any{
 		"category":   "nhentai",
 		"gallery_id": float64(12345),
 		"artist":     []any{"artistname"},
@@ -206,7 +211,8 @@ func TestMapNhentaiGallery(t *testing.T) {
 		"characters": []any{"charname"},
 		"tags":       []any{"tag_one", "tag_two"},
 		"type":       "doujinshi",
-	})
+	}
+	pf := m.Map(meta)
 	want := []string{
 		"artist:artistname",
 		"artist:circlename",    // group -> artist (doujin circle)
@@ -228,8 +234,8 @@ func TestMapNhentaiGallery(t *testing.T) {
 		t.Errorf("source = %q, want nhentai", pf.Source)
 	}
 	// The post URL resolves from gallery_id, since nhentai has no id field.
-	if pf.URL != "https://nhentai.net/g/12345/" {
-		t.Errorf("url = %q, want the gallery_id URL", pf.URL)
+	if u := m.PostURL(meta); u != "https://nhentai.net/g/12345/" {
+		t.Errorf("url = %q, want the gallery_id URL", u)
 	}
 }
 
@@ -339,7 +345,8 @@ func TestNamespacedFlatTags(t *testing.T) {
 }
 
 func TestMapZerochanNormalizesSpacedTags(t *testing.T) {
-	pf := newMapper(t, nil).Map(map[string]any{
+	m := newMapper(t, nil)
+	meta := map[string]any{
 		"category": "zerochan",
 		"id":       float64(7654321),
 		"tags": []any{
@@ -347,7 +354,8 @@ func TestMapZerochanNormalizesSpacedTags(t *testing.T) {
 			"Outfit:Plain Dress", "Theme:Frilled Top", "Theme:Green Jacket",
 			"Source:Fanart", "Source:Pixiv",
 		},
-	})
+	}
+	pf := m.Map(meta)
 	// Every name carries spaces and capitals; without normalization monbooru
 	// rejects all but the space-free ones (the observed "only fanart and pixiv").
 	want := []string{
@@ -365,8 +373,8 @@ func TestMapZerochanNormalizesSpacedTags(t *testing.T) {
 			t.Errorf("missing %q in %v", tag, pf.Tags)
 		}
 	}
-	if pf.URL != "https://www.zerochan.net/7654321" {
-		t.Errorf("url = %q", pf.URL)
+	if u := m.PostURL(meta); u != "https://www.zerochan.net/7654321" {
+		t.Errorf("url = %q", u)
 	}
 }
 
@@ -435,11 +443,13 @@ func TestNormalizeFoldsDisallowedChars(t *testing.T) {
 }
 
 func TestMapPhilomenaRatingFromTag(t *testing.T) {
-	pf := newMapper(t, nil).Map(map[string]any{
+	m := newMapper(t, nil)
+	meta := map[string]any{
 		"category": "twibooru",
 		"id":       float64(7654321),
 		"tags":     []any{"safe", "solo", "pony", "spread wings", "gradient background", "artist:some_artist"},
-	})
+	}
+	pf := m.Map(meta)
 	// Philomena boorus carry no rating field; "safe" is a tag, lifted to general.
 	if pf.Rating != RatingGeneral {
 		t.Errorf("twibooru rating = %q, want general (the safe tag)", pf.Rating)
@@ -456,8 +466,8 @@ func TestMapPhilomenaRatingFromTag(t *testing.T) {
 			t.Errorf("missing %q in %v", tag, pf.Tags)
 		}
 	}
-	if pf.URL != "https://twibooru.org/7654321" {
-		t.Errorf("url = %q", pf.URL)
+	if u := m.PostURL(meta); u != "https://twibooru.org/7654321" {
+		t.Errorf("url = %q", u)
 	}
 }
 
@@ -492,19 +502,21 @@ func TestSOverloadDanbooruVsE621(t *testing.T) {
 }
 
 func TestGenericFallback(t *testing.T) {
-	pf := newMapper(t, nil).Map(map[string]any{
+	m := newMapper(t, nil)
+	meta := map[string]any{
 		"category":     "wackybooru",
 		"id":           float64(42),
 		"rating":       "s", // generic: s = safe -> general
 		"tags_general": []any{"foo"},
 		"tags_artist":  []any{"bar"},
 		"tags_mystery": []any{"baz"}, // unknown suffix -> general
-	})
+	}
+	pf := m.Map(meta)
 	if pf.Source != "wackybooru" {
 		t.Errorf("source = %q", pf.Source)
 	}
-	if pf.URL != "" {
-		t.Errorf("generic profile has no URL template, got %q", pf.URL)
+	if u := m.PostURL(meta); u != "" {
+		t.Errorf("generic profile has no URL template, got %q", u)
 	}
 	if pf.Rating != RatingGeneral {
 		t.Errorf("generic s = %q, want general", pf.Rating)
@@ -520,16 +532,17 @@ func TestMapDirectlink(t *testing.T) {
 	m := newMapper(t, nil)
 	// A bare media URL: the host becomes the source and the file URL is rebuilt
 	// as the canonical link. There is no booru post, so no tags and no rating.
-	pf := m.Map(map[string]any{
+	meta := map[string]any{
 		"category": "directlink", "subcategory": "example.com",
 		"domain": "img.example.com", "path": "art/2024",
 		"filename": "picture", "extension": "jpg", "query": nil, "fragment": nil,
-	})
+	}
+	pf := m.Map(meta)
 	if pf.Source != "img.example.com" {
 		t.Errorf("source = %q, want the file host", pf.Source)
 	}
-	if pf.URL != "https://img.example.com/art/2024/picture.jpg" {
-		t.Errorf("url = %q, want the rebuilt file URL", pf.URL)
+	if u := m.PostURL(meta); u != "https://img.example.com/art/2024/picture.jpg" {
+		t.Errorf("url = %q, want the rebuilt file URL", u)
 	}
 	if len(pf.Tags) != 0 {
 		t.Errorf("a bare media URL carries no tags, got %v", pf.Tags)
@@ -592,13 +605,14 @@ func TestUserOverridesWin(t *testing.T) {
 
 func TestPerSiteGallery(t *testing.T) {
 	cfg := config.Default()
+	cfg.Monbooru.DefaultGallery = "main"
 	cfg.Sites = []config.Site{{Name: "e621", Gallery: "furry"}}
 	m := newMapper(t, cfg)
-	if g := m.Map(map[string]any{"category": "e621", "id": float64(1)}).Gallery; g != "furry" {
+	if g := m.Gallery("e621"); g != "furry" {
 		t.Errorf("e621 gallery = %q, want furry", g)
 	}
-	if g := m.Map(map[string]any{"category": "danbooru", "id": float64(1)}).Gallery; g != "default" {
-		t.Errorf("danbooru gallery = %q, want default", g)
+	if g := m.Gallery("danbooru"); g != "main" {
+		t.Errorf("danbooru gallery = %q, want main (default)", g)
 	}
 }
 
@@ -769,12 +783,14 @@ func TestFormatTag(t *testing.T) {
 func TestMapHandlesMissingFields(t *testing.T) {
 	// No category, no id, no tags, odd id type: must not panic and must
 	// produce a usable (mostly empty) result.
-	pf := newMapper(t, nil).Map(map[string]any{"id": true})
-	if pf.URL != "" || len(pf.Tags) != 0 || pf.Rating != "" {
+	m := newMapper(t, nil)
+	meta := map[string]any{"id": true}
+	pf := m.Map(meta)
+	if m.PostURL(meta) != "" || len(pf.Tags) != 0 || pf.Rating != "" {
 		t.Errorf("empty item should map to empty fields, got %+v", pf)
 	}
-	if pf.Gallery != "default" {
-		t.Errorf("gallery should still default, got %q", pf.Gallery)
+	if g := m.Gallery(""); g != "" {
+		t.Errorf("gallery should be the unset default, got %q", g)
 	}
 }
 

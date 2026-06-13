@@ -24,15 +24,18 @@
         <label>default gallery</label>
         {{if .Galleries}}
         <select name="default_gallery">
+          <option value=""{{if not $.Cfg.Monbooru.DefaultGallery}} selected{{end}}>(none - monbooru's active gallery)</option>
           {{range .Galleries}}<option value="{{.Name}}" {{if eq .Name $.Cfg.Monbooru.DefaultGallery}}selected{{end}}>{{.Name}} ({{.Images}} img)</option>{{end}}
         </select>
         {{else}}
         <input type="text" name="default_gallery" value="{{.Cfg.Monbooru.DefaultGallery}}">
         <span class="hint">(galleries unavailable; monbooru unreachable)</span>
         {{end}}
+        {{if .GalleryWarn}}<span class="hint-warn">{{.GalleryWarn}}</span>{{end}}
       </div>
+      <div id="flash-monbooru-test"></div>
       <div class="section-actions">
-        <button type="submit" formaction="/settings/monbooru/test" formmethod="POST">test connection</button>
+        <button type="button" hx-post="/settings/monbooru/test" hx-include="closest form" hx-target="#flash-monbooru-test" hx-swap="innerHTML">test connection</button>
         <button type="submit">save</button>
       </div>
     </form>

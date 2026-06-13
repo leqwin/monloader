@@ -19,6 +19,16 @@ const (
 	JobCanceled  JobStatus = "canceled"
 )
 
+// ValidJobStatus reports whether s is a known job status, for validating a
+// status filter at the API boundary.
+func ValidJobStatus(s JobStatus) bool {
+	switch s {
+	case JobQueued, JobRunning, JobSucceeded, JobPartial, JobFailed, JobCanceled:
+		return true
+	}
+	return false
+}
+
 // ItemStatus is the per-item progress state.
 type ItemStatus string
 
@@ -51,6 +61,7 @@ const (
 	ErrCodeAuthRequired        = "auth_required"
 	ErrCodeBlocked             = "blocked"
 	ErrCodeRateLimited         = "rate_limited"
+	ErrCodeNetworkUnreachable  = "network_unreachable"
 	ErrCodeFileTooLarge        = "file_too_large"
 	ErrCodeMonbooruUnreachable = "monbooru_unreachable"
 	ErrCodeMonbooruRejected    = "monbooru_rejected"
@@ -267,13 +278,6 @@ func (j *Job) UpdateItem(i int, mutate func(*Item)) bool {
 	return true
 }
 
-// ItemCount returns the number of resolved items (for the processor's loop).
-func (j *Job) ItemCount() int {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	return len(j.Items)
-}
-
 // status reads the job's lifecycle state under the lock, for a queue scan that
 // needs a finished job's terminal status while holding the queue lock.
 func (j *Job) status() JobStatus {
@@ -290,6 +294,14 @@ func (j *Job) seriesKey() int64 {
 		return j.Root
 	}
 	return j.ID
+}
+
+// windowEnd is the offset just past this window's fetched range: its start plus
+// the cap it took. A window that did not hit the cap contributes only its start.
+func (j *Job) windowEnd() int {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.Offset + j.Cap
 }
 
 // Fail records a job-level failure (e.g. the resolve pass errored) and
@@ -417,6 +429,12 @@ func (j *Job) Snapshot() *Job {
 	defer j.mu.Unlock()
 	items := make([]Item, len(j.Items))
 	copy(items, j.Items)
+	// A running job's summary is only stamped at finalize; compute it live so the
+	// queue and API track item progress instead of reading all-zeros until then.
+	summary := j.Summary
+	if !j.finalized {
+		summary = summarize(j.Items)
+	}
 	return &Job{
 		ID:         j.ID,
 		URL:        j.URL,
@@ -430,7 +448,7 @@ func (j *Job) Snapshot() *Job {
 		Auto:       j.Auto,
 		Force:      j.Force,
 		Priority:   j.Priority,
-		Summary:    j.Summary,
+		Summary:    summary,
 		Capped:     j.Capped,
 		Cap:        j.Cap,
 		ErrorCode:  j.ErrorCode,

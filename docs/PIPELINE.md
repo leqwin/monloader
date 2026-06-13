@@ -35,7 +35,8 @@ A `failed` item carries one of these stable codes :
 | `auth_required` | the site needs credentials (a 401/403 with a missing-auth message) |
 | `blocked` | a bot-protection wall (Cloudflare / captcha challenge), kept distinct from `auth_required` so its 403 is not read as a missing credential |
 | `rate_limited` | the site returned 429 / a rate-limit error |
-| `download_failed` | any other non-zero gallery-dl exit (network, HTTP 4xx/5xx) |
+| `network_unreachable` | gallery-dl could not resolve or reach the host (DNS failure, network unreachable); a refused/dropped connection stays `download_failed` |
+| `download_failed` | any other non-zero gallery-dl exit (a reached host erroring, HTTP 4xx/5xx, a refused/dropped connection) |
 | `mapping_failed` | metadata present but no usable file or URL could be built |
 | `file_too_large` | monbooru rejected the upload for size |
 | `monbooru_unreachable` | the push got no HTTP response (connect / timeout) |

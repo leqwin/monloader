@@ -161,6 +161,33 @@ func TestSettingsScreenSections(t *testing.T) {
 	}
 }
 
+func TestDefaultGalleryWarning(t *testing.T) {
+	mb := monbooruStub()
+	defer mb.Close()
+	srv := newWebServer(t, mb.URL, "")
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// The default config sets no gallery, so settings warns and prompts a pick.
+	if _, body := get(t, ts, "/settings"); !strings.Contains(body, "no default gallery set") {
+		t.Error("an unset default gallery should warn in settings")
+	}
+	// A gallery the monbooru stub does not list warns it will be rejected.
+	if err := srv.updateConfig(func(c *config.Config) error { c.Monbooru.DefaultGallery = "ghost"; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if _, body := get(t, ts, "/settings"); !strings.Contains(body, "is not in monbooru") {
+		t.Error("an unknown default gallery should warn in settings")
+	}
+	// A gallery the stub lists is fine - no warning.
+	if err := srv.updateConfig(func(c *config.Config) error { c.Monbooru.DefaultGallery = "default"; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if _, body := get(t, ts, "/settings"); strings.Contains(body, "hint-warn") {
+		t.Error("a valid default gallery should not warn")
+	}
+}
+
 func TestEnqueueViaForm(t *testing.T) {
 	mb := monbooruStub()
 	defer mb.Close()

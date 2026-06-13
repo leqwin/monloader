@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -35,6 +36,10 @@ func (h *Handler) enqueue(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.URL == "" {
 		apiError(w, http.StatusBadRequest, "invalid_request", "url is required")
+		return
+	}
+	if !validEnqueueURL(body.URL) {
+		apiError(w, http.StatusBadRequest, "invalid_request", "url must be an http(s) URL")
 		return
 	}
 
@@ -90,12 +95,24 @@ func waitSeconds(r *http.Request) int {
 	return n
 }
 
+// validEnqueueURL mirrors the web add-bar check: an absolute http(s) URL with a
+// host, rejecting non-URLs at the boundary instead of failing them at resolve.
+func validEnqueueURL(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+}
+
 // listJobs handles GET /api/v1/queue with optional status filter and
 // pagination.
 func (h *Handler) listJobs(w http.ResponseWriter, r *http.Request) {
 	page, limit := parsePage(r, 50, 200)
+	status := queue.JobStatus(r.URL.Query().Get("status"))
+	if status != "" && !queue.ValidJobStatus(status) {
+		apiError(w, http.StatusBadRequest, "invalid_request", "unknown status filter")
+		return
+	}
 	jobs, total := h.queue.List(queue.ListOptions{
-		Status: queue.JobStatus(r.URL.Query().Get("status")),
+		Status: status,
 		Limit:  limit,
 		Page:   page,
 	})

@@ -269,9 +269,8 @@ func TestTestMonbooruButton(t *testing.T) {
 	defer ts.Close()
 
 	resp := postForm(t, ts, srv, "/settings/monbooru/test", url.Values{"api_url": {mb.URL}})
-	resp.Body.Close()
-	if loc := resp.Header.Get("Location"); !strings.Contains(loc, "kind=ok") {
-		t.Errorf("reachable monbooru test should flash ok, loc=%q", loc)
+	if body := readBody(t, resp); !strings.Contains(body, "flash-ok") {
+		t.Errorf("reachable monbooru test should flash ok, body=%q", body)
 	}
 }
 

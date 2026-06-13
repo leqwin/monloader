@@ -10,8 +10,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/leqwin/monloader/internal/config"
 	"github.com/leqwin/monloader/internal/queue"
@@ -174,6 +176,32 @@ func TestPushImageFileStreams(t *testing.T) {
 	if gotCollection != "vol1" {
 		t.Errorf("collection field = %q, want it streamed alongside the file", gotCollection)
 	}
+}
+
+func TestPushImageFileUnblocksOnBuildError(t *testing.T) {
+	// A request-build error (an unparseable api_url) must not strand the goroutine
+	// streaming the cbz into the pipe; it should unblock and close the file.
+	cfg := config.Default()
+	cfg.Monbooru.APIURL = "http://\x7f" // a control char fails url.Parse in NewRequest
+	c := New(config.NewProvider(cfg))
+
+	path := filepath.Join(t.TempDir(), "bundle.cbz")
+	if err := os.WriteFile(path, []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(50 * time.Millisecond) // let any prior test's connections drain
+	before := runtime.NumGoroutine()
+	if _, err := c.PushImageFile(context.Background(), path, PushMeta{Filename: "b.cbz"}, "g"); err == nil {
+		t.Fatal("PushImageFile should error on an unparseable api_url")
+	}
+	for i := 0; i < 100; i++ {
+		if runtime.NumGoroutine() <= before {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Errorf("writer goroutine leaked: before=%d still=%d", before, runtime.NumGoroutine())
 }
 
 func TestPushImageCreatedEnvelopedWithWarnings(t *testing.T) {

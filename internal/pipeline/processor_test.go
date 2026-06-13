@@ -832,6 +832,32 @@ func TestPipelineMangaGalleryBundlesAllPages(t *testing.T) {
 	}
 }
 
+func TestPipelineMangaHonorsFolderOverride(t *testing.T) {
+	// The cbz push path must honor a per-job folder override, as the loose-item
+	// path already does; without the fix it always used the default folder.
+	fake := &fakeRunner{
+		resolved: []gdl.Item{mangaPage("654738", 1), mangaPage("654738", 2)},
+		writeIdx: []int{0, 1},
+	}
+	var gotFolder string
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseMultipartForm(32 << 20)
+		gotFolder = r.FormValue("folder")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
+	}
+	q, cleanup := testEnv(t, fake, handler)
+	defer cleanup()
+
+	job := waitJob(t, q, q.Enqueue("https://example.com/g/654738/", queue.Options{Folder: "manga"}))
+	if job.Status != queue.JobSucceeded {
+		t.Fatalf("status = %s, want succeeded", job.Status)
+	}
+	if gotFolder != "manga" {
+		t.Errorf("cbz push folder = %q, want the per-job override \"manga\"", gotFolder)
+	}
+}
+
 func TestPipelineMangaExemptFromCap(t *testing.T) {
 	// A manga gallery larger than the cap is one book, so it is fetched whole:
 	// the over-cap resolve re-resolves uncapped and the cbz keeps every page.

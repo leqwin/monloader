@@ -99,7 +99,13 @@ func (c *Client) PushImageFile(ctx context.Context, path string, meta PushMeta, 
 	w := multipart.NewWriter(pw)
 	contentType := w.FormDataContentType()
 	go func() { pw.CloseWithError(streamFileMultipart(w, path, meta)) }()
-	return c.sendPush(ctx, c.imagesEndpoint(gallery), contentType, pr, sha)
+	res, err := c.sendPush(ctx, c.imagesEndpoint(gallery), contentType, pr, sha)
+	if err != nil {
+		// sendPush can return before consuming the body (a request-build error
+		// never reads the pipe); unblock the writer goroutine so it closes the file.
+		pr.CloseWithError(err)
+	}
+	return res, err
 }
 
 // imagesEndpoint is the push URL with the optional gallery selector.
@@ -283,6 +289,12 @@ func parseImageResult(data []byte) (id int64, warnings []string) {
 	return img.ID, warnings
 }
 
+// rejected reads a non-OK response body and classifies it as monbooru_rejected.
+func rejected(resp *http.Response) *queue.CodedError {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return &queue.CodedError{Code: queue.ErrCodeMonbooruRejected, Msg: apiErrMessage(body, resp.Status)}
+}
+
 // apiErrMessage pulls monbooru's {error,code} message out of an error body,
 // falling back to the HTTP status line.
 func apiErrMessage(body []byte, status string) string {
@@ -309,8 +321,7 @@ func (c *Client) ListGalleries(ctx context.Context) ([]Gallery, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		return nil, &queue.CodedError{Code: queue.ErrCodeMonbooruRejected, Msg: apiErrMessage(body, resp.Status)}
+		return nil, rejected(resp)
 	}
 	var galleries []Gallery
 	if err := json.NewDecoder(resp.Body).Decode(&galleries); err != nil {
@@ -335,8 +346,7 @@ func (c *Client) TestConnection(ctx context.Context) (string, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		return "", &queue.CodedError{Code: queue.ErrCodeMonbooruRejected, Msg: apiErrMessage(body, resp.Status)}
+		return "", rejected(resp)
 	}
 	var info struct {
 		Version string `json:"version"`

@@ -189,6 +189,28 @@ func TestEnqueueMaxItemsValidation(t *testing.T) {
 	}
 }
 
+func TestEnqueueRejectsNonHTTPURL(t *testing.T) {
+	srv := newTestServer(t, "")
+	for _, u := range []string{"ftp://h/x", "file:///etc/passwd", "notaurl", "/posts/1"} {
+		resp, _ := doJSON(t, "POST", srv.URL+"/api/v1/queue", "", `{"url":"`+u+`"}`)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("url %q: status = %d, want 400", u, resp.StatusCode)
+		}
+	}
+}
+
+func TestListRejectsUnknownStatus(t *testing.T) {
+	srv := newTestServer(t, "")
+	resp, _ := doJSON(t, "GET", srv.URL+"/api/v1/queue?status=bogus", "", "")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status=bogus: status = %d, want 400", resp.StatusCode)
+	}
+	resp, _ = doJSON(t, "GET", srv.URL+"/api/v1/queue?status=failed", "", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status=failed: status = %d, want 200", resp.StatusCode)
+	}
+}
+
 func TestEnqueueWaitResolvesOutcomes(t *testing.T) {
 	srv := newTestServer(t, "")
 	cases := []struct {

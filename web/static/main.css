@@ -159,7 +159,7 @@ input:focus, select:focus, textarea:focus { outline: 1px solid var(--accent); bo
 
 /* Settings */
 .settings-section { margin-bottom: 20px; background: var(--bg-surface); border: 1px solid var(--border); padding: 12px; }
-.section-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.section-actions, .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .settings-section h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); margin-bottom: 10px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
 .sites-title { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
 .sites-title-link { font-size: 12px; font-weight: normal; text-transform: none; letter-spacing: 0; white-space: nowrap; }
@@ -183,6 +183,7 @@ input:focus, select:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .dl-field label { color: var(--fg-dim); }
 .dl-field input, .dl-field select { width: 100%; min-width: 0; }
 .field-hint { grid-column: 2; color: var(--fg-dim); font-size: 11px; }
+.hint-warn { flex-basis: 100%; color: var(--warning); font-size: 12px; }
 textarea { width: 100%; min-height: 80px; }
 .sites-group { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--fg-dim); margin: 14px 0 4px; }
 .sites-table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
@@ -209,7 +210,6 @@ dialog {
 }
 dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
 dialog p { margin-bottom: 10px; }
-.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .btn-danger { color: var(--bg); background: var(--error); border-color: var(--error); }
 .btn-danger:hover { color: var(--error); background: var(--bg); border-color: var(--error); }
 

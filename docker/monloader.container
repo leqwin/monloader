@@ -19,3 +19,6 @@ HealthRetries=3
 HealthStartPeriod=10s
 HealthTimeout=5s
 HealthOnFailure=restart
+
+[Install]
+WantedBy=default.target

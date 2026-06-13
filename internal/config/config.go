@@ -122,8 +122,7 @@ func Default() *Config {
 			BaseURL:     "http://localhost:8081",
 		},
 		Monbooru: MonbooruConfig{
-			APIURL:         "http://monbooru:8080",
-			DefaultGallery: "default",
+			APIURL: "http://monbooru:8080",
 		},
 		Downloader: DownloaderConfig{
 			Concurrency:    1,

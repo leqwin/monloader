@@ -16,14 +16,19 @@ func classifyError(exitCode int, stderr string) *queue.CodedError {
 	case containsAny(low, "no suitable extractor", "unsupported url", "no extractor found"):
 		return &queue.CodedError{Code: queue.ErrCodeUnsupportedURL, Msg: stderr}
 	// A bot-protection wall (Cloudflare, a captcha challenge) returns 403 but is
-	// not a missing credential, so classify it before the auth rule below - else
-	// the "403 forbidden" match would mislabel it auth_required.
+	// not a missing credential; key on the vendor so it reads as blocked. A plain
+	// 403 is not auth either, so it stays out of the auth rule and falls through
+	// to a generic download failure - only a 403 that names an auth need is auth.
 	case containsAny(low, "cloudflare", "challengeerror", "ddos-guard", "captcha"):
 		return &queue.CodedError{Code: queue.ErrCodeBlocked, Msg: stderr}
-	case containsAny(low, "missing authentication", "authentication", "authorization", "authrequired", "login required", "http 401", "401 unauthorized", "http 403", "403 forbidden"):
+	case containsAny(low, "missing authentication", "authentication", "authorization", "authrequired", "login required", "http 401", "401 unauthorized"):
 		return &queue.CodedError{Code: queue.ErrCodeAuthRequired, Msg: stderr}
 	case containsAny(low, "http 429", "429 too many requests", "rate limit", "too many requests"):
 		return &queue.CodedError{Code: queue.ErrCodeRateLimited, Msg: stderr}
+	// Name resolution or an unreachable host is the downloader's own network
+	// failing, not a bad link; a refused/dropped connection stays download_failed.
+	case containsAny(low, "nameresolutionerror", "temporary failure in name resolution", "name or service not known", "network is unreachable", "no route to host"):
+		return &queue.CodedError{Code: queue.ErrCodeNetworkUnreachable, Msg: stderr}
 	default:
 		msg := stderr
 		if msg == "" {

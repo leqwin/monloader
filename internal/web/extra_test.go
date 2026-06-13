@@ -404,7 +404,6 @@ func TestLoginInfo(t *testing.T) {
 		{"api_required", withKey, "api key", false},
 		{"cookies", nil, "cookies", true},
 		{"cookies", withCookies, "cookies", false},
-		{"oauth", nil, "oauth", false},
 		{"none", nil, "none", false},
 		{"", nil, "none", false},
 	}
@@ -424,9 +423,8 @@ func TestTestMonbooruFailure(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 	resp := postForm(t, ts, srv, "/settings/monbooru/test", map[string][]string{"api_url": {deadURL}})
-	resp.Body.Close()
-	if loc := resp.Header.Get("Location"); !strings.Contains(loc, "kind=err") {
-		t.Errorf("unreachable monbooru test should flash err, loc=%q", loc)
+	if body := readBody(t, resp); !strings.Contains(body, "flash-err") {
+		t.Errorf("unreachable monbooru test should flash err, body=%q", body)
 	}
 }
 

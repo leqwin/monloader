@@ -1,5 +1,21 @@
 # Changelog
 
+## [v1.1.1] - 2026-06-13
+### Added
+- Settings warns when the default gallery is unset or not found on monbooru.
+
+### Changed
+- DNS or unreachable-host failures now report as `network_unreachable` instead of a generic download failure.
+- API rejects non-http(s) URLs and unknown status filters with a 400 instead of accepting them.
+
+### Fixed
+- Imports now use monbooru's active gallery instead of requiring one named "default".
+- A plain 403 no longer mislabels a download failure as needing credentials.
+- Testing the monbooru connection no longer clears the token you just typed.
+- Queue rows show live counts while a job runs instead of zeros until it finishes.
+- A per-job destination folder now applies to manga/CBZ imports instead of being ignored.
+- Continuing a capped search no longer re-fetches windows an earlier continuation already took.
+
 ## [v1.1.0] - 2026-06-11
 ### Added
 - Topbar and landing-page links to your monbooru instance.

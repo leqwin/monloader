@@ -270,6 +270,9 @@ func (s *Server) settingsScreen(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	if galleries, err := s.client.ListGalleries(ctx); err == nil {
 		data["Galleries"] = galleries
+		if warn := defaultGalleryWarning(s.cfg.Current().Monbooru.DefaultGallery, galleries); warn != "" {
+			data["GalleryWarn"] = warn
+		}
 	}
 
 	csrf := s.csrfToken(sessionFromContext(r.Context()))
@@ -287,6 +290,20 @@ func (s *Server) settingsScreen(w http.ResponseWriter, r *http.Request) {
 		data["FlashKind"] = kind
 	}
 	s.render(w, "settings", data)
+}
+
+// defaultGalleryWarning flags a default gallery pushes will not reach: unset
+// (downloads fall back to monbooru's active gallery) or a name monbooru lacks.
+func defaultGalleryWarning(name string, galleries []monbooru.Gallery) string {
+	if name == "" {
+		return "no default gallery set - downloads use monbooru's active gallery; pick one to set a fixed target"
+	}
+	for _, g := range galleries {
+		if g.Name == name {
+			return ""
+		}
+	}
+	return "gallery \"" + name + "\" is not in monbooru - pushes will be rejected until it exists"
 }
 
 // statsData backs the settings Stats section: process memory, the bundled
@@ -371,8 +388,6 @@ func loginInfo(auth string, site *config.Site) (string, bool) {
 		return "api key", site == nil || site.APIKey == ""
 	case "cookies":
 		return "cookies", site == nil || site.Cookies == ""
-	case "oauth":
-		return "oauth", false
 	default:
 		return "none", false
 	}
@@ -438,10 +453,12 @@ func (s *Server) testMonbooru(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	if _, err := monbooru.New(config.NewProvider(&tmp)).TestConnection(ctx); err != nil {
-		s.redirectFlash(w, r, "err", "connection failed: "+err.Error())
+		flashFragment(w, "err", "connection failed: "+err.Error())
 		return
 	}
-	s.redirectFlash(w, r, "ok", "monbooru reachable - click save to keep these settings")
+	// An htmx swap, not a redirect, so the typed token stays in the field and a
+	// following save persists it rather than the page reload blanking it first.
+	flashFragment(w, "ok", "monbooru reachable - save to keep these settings")
 }
 
 func (s *Server) saveDownloader(w http.ResponseWriter, r *http.Request) {

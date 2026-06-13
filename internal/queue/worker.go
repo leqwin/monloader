@@ -43,9 +43,9 @@ func (q *Queue) worker() {
 		}
 		q.runJob(j, ctx)
 		// A job briefly holds the whole download (the -j output, each file's
-		// bytes, a cbz buffered in full) in the heap; hand the freed pages back
-		// to the OS so memory returns to baseline between downloads rather than
-		// climbing and staying there.
+		// bytes) in the heap; hand the freed pages back to the OS so memory
+		// returns to baseline between downloads rather than climbing and staying
+		// there.
 		debug.FreeOSMemory()
 	}
 }

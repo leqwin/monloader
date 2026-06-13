@@ -257,11 +257,18 @@ func TestClassifyError(t *testing.T) {
 		{"No suitable extractor found", queue.ErrCodeUnsupportedURL},
 		{"unsupported URL", queue.ErrCodeUnsupportedURL},
 		{"HTTP 401: missing authentication", queue.ErrCodeAuthRequired},
-		{"403 Forbidden", queue.ErrCodeAuthRequired},
+		// A bare 403 (hotlink/forbidden) is not a missing credential; only a 403
+		// that names an auth need is.
+		{"403 Forbidden", queue.ErrCodeDownloadFailed},
+		{"403 Forbidden: Login Required", queue.ErrCodeAuthRequired},
 		// A Cloudflare/bot-protection 403 is a wall, not a missing credential.
 		{"ChallengeError: Cloudflare challenge (403 Forbidden)", queue.ErrCodeBlocked},
 		{"HTTP 429: too many requests", queue.ErrCodeRateLimited},
 		{"rate limit exceeded", queue.ErrCodeRateLimited},
+		// DNS / unreachable-host is the downloader's network; a refused connection
+		// (the host answered) is not, and stays download_failed.
+		{"NameResolutionError: Failed to resolve 'cdnc.example.com' ([Errno -3] Temporary failure in name resolution)", queue.ErrCodeNetworkUnreachable},
+		{"ConnectionError: [Errno 101] Network is unreachable", queue.ErrCodeNetworkUnreachable},
 		{"connection refused", queue.ErrCodeDownloadFailed},
 		{"", queue.ErrCodeDownloadFailed},
 	}

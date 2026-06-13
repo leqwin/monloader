@@ -451,7 +451,7 @@ func (p *Processor) processCBZ(ctx context.Context, job *queue.Job, itemIdx int,
 	}
 	job.UpdateItem(itemIdx, func(it *queue.Item) { it.Status = queue.ItemDownloaded })
 
-	meta := p.aggregatePool(downloaded, sourceURL, bundleName)
+	meta := p.aggregatePool(downloaded, sourceURL, bundleName, p.folder(job))
 	job.UpdateItem(itemIdx, func(it *queue.Item) { it.Status = queue.ItemUploaded })
 	res, err := p.client.PushImageFile(ctx, dest, meta, gallery)
 	if err != nil {
@@ -463,7 +463,7 @@ func (p *Processor) processCBZ(ctx context.Context, job *queue.Job, itemIdx int,
 
 // aggregatePool merges the bundle's pages into one push: union of non-rating
 // tags, strictest rating, the bundle name as collection, and the submitted URL.
-func (p *Processor) aggregatePool(downloaded []gdl.Downloaded, poolURL, poolName string) monbooru.PushMeta {
+func (p *Processor) aggregatePool(downloaded []gdl.Downloaded, poolURL, poolName, folder string) monbooru.PushMeta {
 	tagSet := map[string]bool{}
 	strictest := ""
 	site := ""
@@ -500,7 +500,7 @@ func (p *Processor) aggregatePool(downloaded []gdl.Downloaded, poolURL, poolName
 		Source:   site,
 		URL:      poolURL,
 		Via:      mapping.Via,
-		Folder:   p.cfg.Current().Downloader.DefaultFolder,
+		Folder:   folder,
 	}
 }
 

@@ -25,9 +25,7 @@ type PushFields struct {
 	Tags            []string
 	Rating          string
 	Source          string
-	URL             string
 	Via             string
-	Gallery         string
 	Collection      string
 	CollectionOrder int
 }
@@ -65,9 +63,8 @@ func (m *Mapper) Map(meta map[string]any) PushFields {
 	profile := m.profileFor(category)
 
 	pf := PushFields{
-		Source:  category,
-		Via:     Via,
-		Gallery: m.Gallery(category),
+		Source: category,
+		Via:    Via,
 	}
 	if category == CategoryDirectlink {
 		// A bare media URL has no booru behind it, so its host is the closest
@@ -135,8 +132,6 @@ func (m *Mapper) Map(meta map[string]any) PushFields {
 
 	sort.Strings(tags)
 	pf.Tags = tags
-
-	pf.URL = m.PostURL(meta)
 
 	if kwdict.String(meta, "subcategory") == "pool" {
 		pf.Collection = PoolName(meta)

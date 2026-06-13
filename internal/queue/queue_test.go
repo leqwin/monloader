@@ -301,6 +301,50 @@ func TestContinueEnqueuesNextWindow(t *testing.T) {
 	}
 }
 
+func TestContinueFromEarlierWindowAdvancesPastHighWater(t *testing.T) {
+	// Continuing a non-latest window must advance past the furthest window the
+	// series has fetched, not re-fetch a window an earlier one already took.
+	q := New(noopProcessor{}, 1, 100)
+	id := q.Enqueue("http://x/search", Options{MaxItems: 8})
+	q.index[id].SetCapped(8) // window A: posts 1-8
+	nid, _ := q.Continue(id)
+	q.index[nid].SetCapped(8) // window B: posts 9-16
+	if b, _ := q.Get(nid); b.Offset != 8 {
+		t.Fatalf("window B offset = %d, want 8", b.Offset)
+	}
+
+	// Continue from the earlier window A; the new window starts past B, not at B.
+	cid, err := q.Continue(id)
+	if err != nil {
+		t.Fatalf("Continue(earlier): %v", err)
+	}
+	if c, _ := q.Get(cid); c.Offset != 16 {
+		t.Errorf("continue from an earlier window offset = %d, want 16 (past the high-water)", c.Offset)
+	}
+}
+
+func TestSnapshotLiveSummaryWhileRunning(t *testing.T) {
+	// A running (not finalized) job's snapshot reflects current item outcomes, so
+	// the queue and API show live progress instead of all-zeros until finalize.
+	j := newJob(1, "http://x", Options{}, time.Now())
+	j.SetItems([]Item{{PostID: "a"}, {PostID: "b"}, {PostID: "c"}})
+	j.UpdateItem(0, func(it *Item) { it.Status = ItemDownloaded })
+	j.UpdateItem(0, func(it *Item) { it.Status = ItemUploaded })
+	j.UpdateItem(0, func(it *Item) { it.Status = ItemDone; it.Outcome = OutcomeCreated })
+
+	if s := j.Snapshot(); s.Summary.Created != 1 || s.Summary.Total != 3 {
+		t.Errorf("running snapshot summary = %+v, want 1 created / 3 total", s.Summary)
+	}
+
+	// A failed job keeps the zero summary Fail leaves (the row reads "failed - code").
+	f := newJob(2, "http://y", Options{}, time.Now())
+	f.SetItems([]Item{{PostID: "a"}})
+	f.Fail("download_failed", "boom", time.Now())
+	if s := f.Snapshot(); s.Summary != (Summary{}) {
+		t.Errorf("failed-resolve snapshot summary = %+v, want the zero summary", s.Summary)
+	}
+}
+
 func TestContinueInheritsSeriesRoot(t *testing.T) {
 	q := New(noopProcessor{}, 1, 100)
 	id := q.Enqueue("http://x/search", Options{MaxItems: 50})

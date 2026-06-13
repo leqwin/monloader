@@ -93,11 +93,29 @@ func WriteManagedConfig(cfg *config.Config, flatTagSites []string) error {
 	if path == "" {
 		return fmt.Errorf("gallerydl.config_path is empty")
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("creating gallery-dl config dir: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	// Write to a temp file and rename so a crash mid-write cannot leave a
+	// truncated config a later gallery-dl run would load broken.
+	tmp, err := os.CreateTemp(dir, ".gallery-dl.json.*")
+	if err != nil {
+		return fmt.Errorf("creating temp config: %w", err)
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
 		return fmt.Errorf("writing managed config: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("closing temp config: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("renaming managed config: %w", err)
 	}
 	return nil
 }

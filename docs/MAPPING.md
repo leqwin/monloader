@@ -114,7 +114,7 @@ change. There are two levels:
 
   | field | purpose |
   |---|---|
-  | `family` | `danbooru`, `e621`, `moebooru`, `gelbooru_v02`, or `generic` - picks the rating semantics and the per-category tag regime |
+  | `family` | `danbooru`, `e621`, `moebooru`, `gelbooru_v02`, `philomena`, or `generic` - picks the rating semantics and the per-category tag regime |
   | `kind` | `booru` (default) or `manga` - a manga gallery bundles its pages into one cbz |
   | `post_url_template` | the canonical post URL with `{id}` substituted (e.g. `https://danbooru.donmai.us/posts/{id}`) |
   | `auth` | `none`, `api_optional`, `api_required`, or `cookies` - drives the settings login indicator |

@@ -218,14 +218,34 @@ func (q *Queue) continueFrom(id int64, auto bool) (int64, error) {
 	if !src.Capped {
 		return 0, ErrNotCapped
 	}
+	// Advance past the furthest window the series has fetched, not just the one
+	// this call names, so a continue from a non-latest window cannot re-fetch a
+	// window an earlier one already took.
 	return q.Enqueue(src.URL, Options{
 		Gallery:  src.Gallery,
 		Folder:   src.Folder,
 		MaxItems: src.Cap,
-		Offset:   src.Offset + src.Cap,
+		Offset:   q.seriesHighWater(src.seriesKey()),
 		Root:     src.seriesKey(),
 		Auto:     auto,
 	}), nil
+}
+
+// seriesHighWater returns the offset just past the furthest window any job in
+// the series has fetched.
+func (q *Queue) seriesHighWater(root int64) int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	high := 0
+	for _, j := range q.index {
+		if j.seriesKey() != root {
+			continue
+		}
+		if end := j.windowEnd(); end > high {
+			high = end
+		}
+	}
+	return high
 }
 
 // autoContinue advances a fetch-all chain once a window finishes: a capped auto

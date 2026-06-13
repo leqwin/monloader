@@ -5,8 +5,8 @@ Paste a direct URL, an image or search from an online booru/gallery or [any site
 
 <table>
   <tr>
-    <td><img src="/.github/assets/add.webp" width="400"/></td>
-    <td><img src="/.github/assets/queue.webp" width="400"/></td>
+    <td><img src=".github/assets/add.webp" width="400"/></td>
+    <td><img src=".github/assets/queue.webp" width="400"/></td>
   </tr>
 </table>
 
@@ -18,7 +18,7 @@ Paste a direct URL, an image or search from an online booru/gallery or [any site
 - **Pools and manga.** A booru pool's pages import as an ordered collection; a manga or comic gallery bundles into a single `.cbz` for monbooru's reader.
 - **Metadata mapped to monbooru.** Tags by category (artist / character / copyright / meta / ...), rating, and source, normalized across booru families so tags land the way monbooru expects them.
 - **50+ curated sites, plus a fallback.** Profiles for the danbooru, e621, moebooru, and gelbooru families and a set of manga/comic sites; anything else gallery-dl supports still works through a generic fallback.
-- **Queue management.** Every item reports `created`, `duplicate`, `skipped_archive`, or `failed` with a stable error code. Monbooru's deduplication and monloader's queue mean re-submitting a URL does not re-download or double-import.
+- **Queue management.** Every item reports `created`, `duplicate`, `skipped_archive`, `skipped_unsupported`, or `failed` with a stable error code. Monbooru's deduplication and monloader's queue mean re-submitting a URL does not re-download or double-import.
 
 ---
 
@@ -31,7 +31,7 @@ monloader ships in monbooru's `docker/docker-compose.yml` :
    ```bash
    docker compose up -d monloader
    ```
-3. Open monloader `http://localhost:8081`, go to **Settings -> monbooru**, paste the token, and click **test connection**. 
+3. Open monloader `http://localhost:8081`, go to **Settings -> monbooru**, paste the token, click **test connection**, then **save**.
 4. Paste a URL into the command bar on the home screen and press Enter.
 
 See [docs/README.md](docs/README.md) for installation, configuration, sites and credentials, metadata mapping, the REST API, and building from source.

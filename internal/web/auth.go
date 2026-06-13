@@ -119,13 +119,23 @@ func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	s.render(w, "login", map[string]any{
+	s.render(w, "login", s.loginData(""))
+}
+
+// loginData is the login page's template data; errMsg is set only on a failed
+// attempt.
+func (s *Server) loginData(errMsg string) map[string]any {
+	data := map[string]any{
 		"Title":        "Login - " + s.booruName(),
 		"CSRFToken":    s.csrfToken("anon"),
 		"Conn":         "checking",
 		"BooruName":    s.booruName(),
 		"BooruFavicon": s.booruFaviconURL(),
-	})
+	}
+	if errMsg != "" {
+		data["Error"] = errMsg
+	}
+	return data
 }
 
 func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
@@ -140,14 +150,7 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 	password := r.FormValue("password")
 	if bcrypt.CompareHashAndPassword([]byte(s.cfg.Current().Auth.PasswordHash), []byte(password)) != nil {
 		w.WriteHeader(http.StatusUnauthorized)
-		s.render(w, "login", map[string]any{
-			"Title":        "Login - " + s.booruName(),
-			"CSRFToken":    s.csrfToken("anon"),
-			"Error":        "incorrect password",
-			"Conn":         "checking",
-			"BooruName":    s.booruName(),
-			"BooruFavicon": s.booruFaviconURL(),
-		})
+		s.render(w, "login", s.loginData("incorrect password"))
 		return
 	}
 	id, err := s.sessions.New(s.cfg.Current().Auth.SessionLifetimeDays)
