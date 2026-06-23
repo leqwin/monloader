@@ -18,9 +18,9 @@
   <div id="topbar">
     <a href="/" id="logo"><img src="{{.BooruLogo}}" alt="" class="topbar-logo"><span>{{.BooruName}}</span></a>
     <nav>
-      <a href="/queue" {{if eq .ActiveNav "queue"}}class="active"{{end}}>queue</a>
-      <a href="/settings" {{if eq .ActiveNav "settings"}}class="active"{{end}}>settings</a>
-      {{if .MonbooruWebURL}}<span class="nav-sep"></span><a href="{{.MonbooruWebURL}}" target="_blank" rel="noopener">Go to monbooru</a>{{end}}
+      <a href="/queue" {{if eq .ActiveNav "queue"}}class="active"{{end}}>Queue</a>
+      <a href="/settings" {{if eq .ActiveNav "settings"}}class="active"{{end}}>Settings</a>
+      {{if .MonbooruWebURL}}<span class="nav-sep"></span><a href="{{.MonbooruWebURL}}">Go to monbooru</a>{{end}}
     </nav>
     {{if .AuthEnabled}}
     <div id="topbar-right">

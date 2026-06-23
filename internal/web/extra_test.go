@@ -543,7 +543,7 @@ func TestMonbooruLink(t *testing.T) {
 	defer ts.Close()
 
 	_, queue := get(t, ts, "/queue")
-	if !strings.Contains(queue, `<a href="http://booru.example.com" target="_blank" rel="noopener">Go to monbooru</a>`) {
+	if !strings.Contains(queue, `<a href="http://booru.example.com">Go to monbooru</a>`) {
 		t.Errorf("queue topbar missing the monbooru link, got %q", queue)
 	}
 

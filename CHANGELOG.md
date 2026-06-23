@@ -1,5 +1,11 @@
 # Changelog
 
+## [v1.1.2] - 2026-06-23
+### Changed
+- Links to your monbooru instance open in the same tab instead of a new one.
+- Topbar logo, spacing, and labels restyled to match monbooru.
+- Bundled gallery-dl updated to 1.32.4.
+
 ## [v1.1.1] - 2026-06-13
 ### Added
 - Settings warns when the default gallery is unset or not found on monbooru.

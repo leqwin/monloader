@@ -61,11 +61,11 @@ input:focus, select:focus, textarea:focus { outline: 1px solid var(--accent); bo
   gap: 16px;
   flex-shrink: 0;
 }
-#topbar #logo { display: flex; align-items: center; gap: 8px; font-weight: bold; letter-spacing: 2px; color: var(--fg); }
+#topbar #logo { display: flex; align-items: center; gap: 6px; font-size: 16px; font-weight: bold; letter-spacing: 2px; color: var(--fg); }
 #topbar #logo span { text-transform: uppercase; }
 #topbar #logo:hover { color: var(--accent); text-decoration: none; }
-#topbar .topbar-logo { height: 30px; width: auto; object-fit: contain; }
-#topbar nav { display: flex; gap: 12px; }
+#topbar .topbar-logo { height: 40px; width: 48px; object-fit: contain; flex-shrink: 0; }
+#topbar nav { display: flex; gap: 12px; margin-left: 16px; }
 #topbar nav a { color: var(--fg-dim); font-size: 13px; padding: 10px 0; border-bottom: 2px solid transparent; }
 #topbar nav a:hover, #topbar nav a.active { color: var(--fg); text-decoration: none; }
 #topbar nav a.active { border-bottom-color: var(--accent); }
