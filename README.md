@@ -22,6 +22,37 @@ Paste a direct URL, an image or search from an online booru/gallery or [any site
 
 ---
 
+## Related applications
+
+monloader is a companion downloader for monbooru. It fetches images from the web and pushes them into your library :
+
+```mermaid
+flowchart LR
+    web["- Any booru or gallery supported by gallery-dl<br/>- Direct image URL"]
+    sender["<b>monsender</b><br/>browser extension"]
+    loader(["<b>monloader</b><br/>downloader"])
+    booru["<b>monbooru</b><br/>Your self-hosted booru"]
+
+    web -->|browse| sender
+    sender -->|REST API| loader
+    web -.->|paste URL| loader
+    loader -->|REST API| booru
+
+    classDef hub  fill:#5c6bc0,stroke:#9fa8da,stroke-width:3px,color:#ffffff;
+    classDef tool fill:#16161c,stroke:#5c6bc0,stroke-width:1.5px,color:#e2e2e8;
+    classDef src  fill:#16161c,stroke:#8888a0,stroke-width:1px,color:#8888a0;
+
+    class loader hub;
+    class sender,booru tool;
+    class web src;
+```
+
+- **[monsender](https://github.com/leqwin/monsender)** : browser extension; sends the URL of the page you're currently browsing to monloader.
+- **monloader** : this application; fetches files and per-post metadata (via gallery-dl) and pushes them into a monbooru gallery over the REST API.
+- **[monbooru](https://github.com/leqwin/monbooru)** : self-hosted booru; organizes, tags, and serves your collection.
+
+---
+
 ## Quick start
 
 monloader ships in monbooru's `docker/docker-compose.yml` :
