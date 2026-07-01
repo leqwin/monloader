@@ -29,7 +29,7 @@ func buildSpec(baseURL string) map[string]any {
 					"type":         "http",
 					"scheme":       "bearer",
 					"bearerFormat": "token",
-					"description":  "Required only when auth.api_token is configured; the API is open otherwise (LAN trust).",
+					"description":  "Required on every endpoint except /health, /api/v1/openapi.json, and /api/v1/docs. Use a named, scoped token from Settings -> Authentication (read: queue/sites; write: enqueue/manage); the API is disabled until at least one token exists.",
 				},
 			},
 			"schemas": map[string]any{
@@ -333,7 +333,7 @@ func (h *Handler) openAPIJSON(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) openAPIDocs(w http.ResponseWriter, r *http.Request) {
 	setCORS(w, r)
 	view := extractDocsView(buildSpec(h.cfg.Current().Server.BaseURL))
-	view.APIProtected = h.cfg.Current().Auth.APIToken != ""
+	view.APIProtected = len(h.cfg.Current().Auth.Tokens) > 0
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := docsTemplate.Execute(w, view); err != nil {
 		http.Error(w, "template error", http.StatusInternalServerError)
@@ -547,9 +547,9 @@ var docsTemplate = template.Must(template.New("api-docs").Parse(`<!DOCTYPE html>
  <h1>{{.Title}}</h1>
  <p class="muted">Version {{.Version}} &middot; base URL <code>{{.BaseURL}}</code></p>
  {{if .APIProtected}}
- <p style="color:#22aa44;border:1px solid #22aa44;padding:4px 8px;">A bearer token is configured: send <code>Authorization: Bearer &lt;token&gt;</code> on every endpoint except <code>/health</code>, <code>/api/v1/openapi.json</code>, and <code>/api/v1/docs</code>.</p>
+ <p style="color:#22aa44;border:1px solid #22aa44;padding:4px 8px;">An API token is configured: send <code>Authorization: Bearer &lt;token&gt;</code> (with a scope covering the method) on every endpoint except <code>/health</code>, <code>/api/v1/openapi.json</code>, and <code>/api/v1/docs</code>.</p>
  {{else}}
- <p style="color:#ffaa00;border:1px solid #ffaa00;padding:4px 8px;">No bearer token is configured, so the API is open. Set <code>auth.api_token</code> to require <code>Authorization: Bearer &lt;token&gt;</code>.</p>
+ <p style="color:#ffaa00;border:1px solid #ffaa00;padding:4px 8px;">No API token is configured, so the API is disabled (every authenticated endpoint returns <code>503 api_disabled</code>). Create one in Settings -&gt; Authentication.</p>
  {{end}}
  <p class="muted">Raw spec: <a href="/api/v1/openapi.json">openapi.json</a></p>
 

@@ -212,6 +212,32 @@ func TestProbeContentTypeHonorsTimeout(t *testing.T) {
 	}
 }
 
+func TestDirectlinkDownload(t *testing.T) {
+	body := []byte("\xff\xd8\xffavatarbytes")
+	srv := mediaServer(t, body)
+	workDir := t.TempDir()
+
+	dls, ok, err := directlinkDownload(context.Background(), srv.URL+"/ytc/avatar", workDir, nil)
+	if err != nil || !ok {
+		t.Fatalf("directlinkDownload: ok=%v err=%v", ok, err)
+	}
+	if len(dls) != 1 || !strings.HasSuffix(dls[0].Path, ".jpg") {
+		t.Fatalf("downloaded = %+v, want one .jpg from the served type", dls)
+	}
+	if got, err := os.ReadFile(dls[0].Path); err != nil || !bytes.Equal(got, body) {
+		t.Errorf("saved bytes = %q (err %v), want the served body", got, err)
+	}
+
+	// A non-media response is declined so the caller keeps gallery-dl's error.
+	html := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+	}))
+	t.Cleanup(html.Close)
+	if _, ok, _ := directlinkDownload(context.Background(), html.URL+"/page", workDir, nil); ok {
+		t.Error("a text/html response should be declined")
+	}
+}
+
 // The fallback runs after gallery-dl rejects the URL, so these need the real
 // binary; a machine without it skips, like the other live wrapper tests.
 func TestLiveResolveDirectlinkFallback(t *testing.T) {

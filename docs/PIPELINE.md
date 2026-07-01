@@ -27,6 +27,10 @@ Every item ends with one of five outcomes, never silently dropped:
 | `skipped_unsupported` | monbooru cannot ingest this file type; not pushed |
 | `failed` | something went wrong; carries an `error_code` |
 
+monbooru ingests jpg, png, webp, gif, mp4, webm, and cbz files; a downloaded
+file of any other type (audio, svg, avif, a document) is `skipped_unsupported`
+rather than pushed and rejected.
+
 A `failed` item carries one of these stable codes :
 
 | error_code | when |
@@ -44,8 +48,8 @@ A `failed` item carries one of these stable codes :
 | `canceled` | the job was canceled while the item was in flight |
 
 The job's `summary` aggregates the counts:
-`{ created, duplicate, skipped, failed, total }`. A single-post enqueue that was
-already saved resolves to a summary like `{ created: 0, duplicate: 1, ... }.
+`{ created, duplicate, skipped, failed, canceled, total }`. A single-post enqueue
+that was already saved resolves to a summary like `{ created: 0, duplicate: 1, ... }`.
 
 ## Pools and manga
 
@@ -66,3 +70,12 @@ by kind:
 
 Manga/comic sites are flagged in their profile; see [MAPPING.md](MAPPING.md) for
 the per-site details.
+
+## Dispatcher pages
+
+Some URLs list other pages rather than files: a forum thread with off-site
+images, an archive board, or a manga/comic title that indexes its chapters.
+monloader follows these handoffs - a forum thread or board is re-resolved so its
+externally hosted files come down as loose items, and each chapter of a manga
+title is imported as its own `.cbz`. The per-job cap bounds how many children are
+pulled.

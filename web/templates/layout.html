@@ -35,8 +35,7 @@
 
 {{define "footer"}}
   <footer id="footer">
-    {{template "conn_light" .}}
-    <div><a href="/api/v1/docs" target="_blank" rel="noopener">api docs</a> &middot; <a href="{{.RepoURL}}" target="_blank" rel="noopener">monloader</a> {{.Version}}{{if .GalleryDLVersion}} &middot; <a href="https://github.com/mikf/gallery-dl" target="_blank" rel="noopener">gallery-dl</a> {{.GalleryDLVersion}}{{end}}</div>
+    <div class="footer-line">{{template "conn_light" .}}{{if .MonbooruPaired}} &middot; {{end}}<a href="{{.RepoURL}}" target="_blank" rel="noopener">monloader</a> {{.Version}}{{if .GalleryDLVersion}} &middot; <a href="https://github.com/mikf/gallery-dl" target="_blank" rel="noopener">gallery-dl</a> {{.GalleryDLVersion}}{{end}} &middot; <a href="/api/v1/docs" target="_blank" rel="noopener">API</a></div>
   </footer>
 {{end}}
 

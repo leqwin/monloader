@@ -1,12 +1,18 @@
 package config
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
@@ -75,10 +81,143 @@ type GalleryDLConfig struct {
 // AuthConfig gates the optional UI password and the downloader's own API
 // bearer token. Both are off by default for LAN trust.
 type AuthConfig struct {
-	EnablePassword      bool   `toml:"enable_password"`
-	PasswordHash        string `toml:"password_hash"`
-	SessionLifetimeDays int    `toml:"session_lifetime_days"`
-	APIToken            string `toml:"api_token"`
+	EnablePassword      bool    `toml:"enable_password"`
+	PasswordHash        string  `toml:"password_hash"`
+	SessionLifetimeDays int     `toml:"session_lifetime_days"`
+	Tokens              []Token `toml:"tokens,omitempty"`
+}
+
+// API privilege scopes. A token grants any combination; new tokens default
+// to all of them.
+const (
+	ScopeRead  = "read"
+	ScopeWrite = "write"
+)
+
+// AllScopes is every scope a monloader token can hold.
+var AllScopes = []string{ScopeRead, ScopeWrite}
+
+// Token is a named API credential. Only the secret's hash is stored; the
+// plaintext is shown once at creation. Paired is set by the pairing flow and
+// names the peer; it is empty for operator-created tokens.
+type Token struct {
+	ID        string   `toml:"id"`
+	Name      string   `toml:"name"`
+	TokenHash string   `toml:"token_hash"`
+	Scopes    []string `toml:"scopes"`
+	CreatedAt string   `toml:"created_at"`
+	Paired    string   `toml:"paired,omitempty"`
+	PeerURL   string   `toml:"peer_url,omitempty"`
+}
+
+// HasScope reports whether the token carries the given scope.
+func (t Token) HasScope(scope string) bool { return slices.Contains(t.Scopes, scope) }
+
+// HashToken returns the hex SHA-256 of a bearer secret.
+func HashToken(secret string) string {
+	sum := sha256.Sum256([]byte(secret))
+	return hex.EncodeToString(sum[:])
+}
+
+// GenerateSecret returns a fresh 32-character hex bearer secret.
+func GenerateSecret() string {
+	buf := make([]byte, 16)
+	_, _ = rand.Read(buf)
+	return hex.EncodeToString(buf)
+}
+
+func newTokenID() string {
+	buf := make([]byte, 8)
+	_, _ = rand.Read(buf)
+	return hex.EncodeToString(buf)
+}
+
+// reservedTokenName matches names the pairing flow owns, so an operator cannot
+// create one that collides with or impersonates a paired token.
+func reservedTokenName(name string) bool {
+	return strings.HasSuffix(strings.ToLower(strings.TrimSpace(name)), "(paired)")
+}
+
+// ValidateTokenName rejects empty and pairing-reserved names.
+func ValidateTokenName(name string) error {
+	n := strings.TrimSpace(name)
+	if n == "" {
+		return fmt.Errorf("token name must not be empty")
+	}
+	if reservedTokenName(n) {
+		return fmt.Errorf("token names ending in \"(paired)\" are reserved")
+	}
+	return nil
+}
+
+// GenerateToken builds a token from a name and scopes, returning the plaintext
+// secret (available only here). Call it before a replayed updateConfig closure
+// so the id, secret, and timestamp are stable across both applications.
+func GenerateToken(name string, scopes []string) (Token, string) {
+	secret := GenerateSecret()
+	return Token{
+		ID:        newTokenID(),
+		Name:      name,
+		TokenHash: HashToken(secret),
+		Scopes:    scopes,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	}, secret
+}
+
+// TokenFromSecret builds a token whose hash matches a caller-provided secret.
+// Pairing uses this: the initiator generates the secret to hand to the peer and
+// stores the matching token so the peer's calls authenticate.
+func TokenFromSecret(name, secret string, scopes []string) Token {
+	return Token{
+		ID:        newTokenID(),
+		Name:      name,
+		TokenHash: HashToken(secret),
+		Scopes:    scopes,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+}
+
+// TokenNameExists reports whether a token already uses name (case-insensitive).
+func (cfg *Config) TokenNameExists(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	for _, t := range cfg.Auth.Tokens {
+		if strings.ToLower(t.Name) == n {
+			return true
+		}
+	}
+	return false
+}
+
+// FindTokenByHash returns the token whose stored hash matches, or nil.
+func (cfg *Config) FindTokenByHash(hash string) *Token {
+	for i := range cfg.Auth.Tokens {
+		if subtle.ConstantTimeCompare([]byte(cfg.Auth.Tokens[i].TokenHash), []byte(hash)) == 1 {
+			return &cfg.Auth.Tokens[i]
+		}
+	}
+	return nil
+}
+
+// RemoveToken drops the token with the given id, reporting whether it existed.
+func (cfg *Config) RemoveToken(id string) bool {
+	for i := range cfg.Auth.Tokens {
+		if cfg.Auth.Tokens[i].ID == id {
+			cfg.Auth.Tokens = append(cfg.Auth.Tokens[:i], cfg.Auth.Tokens[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// SetTokenScopes replaces a token's scopes, reporting whether it existed.
+func (cfg *Config) SetTokenScopes(id string, scopes []string) bool {
+	for i := range cfg.Auth.Tokens {
+		if cfg.Auth.Tokens[i].ID == id {
+			cfg.Auth.Tokens[i].Scopes = scopes
+			return true
+		}
+	}
+	return false
 }
 
 // LogConfig controls log verbosity: "warn" (default), "info", "debug".
@@ -228,6 +367,7 @@ func (cfg *Config) Clone() *Config {
 	cp.Sites = append([]Site(nil), cfg.Sites...)
 	cp.TagOverrides = append([]TagOverride(nil), cfg.TagOverrides...)
 	cp.RatingOverrides = append([]RatingOverride(nil), cfg.RatingOverrides...)
+	cp.Auth.Tokens = append([]Token(nil), cfg.Auth.Tokens...)
 	return &cp
 }
 
@@ -313,9 +453,6 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("MONLOADER_AUTH_PASSWORD_HASH"); v != "" {
 		cfg.Auth.PasswordHash = v
-	}
-	if v := os.Getenv("MONLOADER_AUTH_API_TOKEN"); v != "" {
-		cfg.Auth.APIToken = v
 	}
 	if v := os.Getenv("MONLOADER_LOG_LEVEL"); v != "" {
 		cfg.Log.Level = v

@@ -139,7 +139,9 @@ func TestQueueScreenHasPoll(t *testing.T) {
 func TestSettingsScreenSections(t *testing.T) {
 	mb := monbooruStub()
 	defer mb.Close()
-	ts := httptest.NewServer(newWebServer(t, mb.URL, "").Handler())
+	srv := newWebServer(t, mb.URL, "")
+	pairMB(t, srv)
+	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
 	status, body := get(t, ts, "/settings")
@@ -167,6 +169,12 @@ func TestDefaultGalleryWarning(t *testing.T) {
 	srv := newWebServer(t, mb.URL, "")
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
+
+	// Without a monbooru pairing the default-gallery field is hidden entirely.
+	if _, body := get(t, ts, "/settings"); strings.Contains(body, `name="default_gallery"`) {
+		t.Error("default gallery field should not render before pairing")
+	}
+	pairMB(t, srv)
 
 	// The default config sets no gallery, so settings warns and prompts a pick.
 	if _, body := get(t, ts, "/settings"); !strings.Contains(body, "no default gallery set") {
@@ -300,10 +308,27 @@ func TestPasswordRedirectsToLogin(t *testing.T) {
 	}
 }
 
+// pairMB completes a monbooru pairing - the issued token plus the push token -
+// so the pairing-gated UI renders (the footer connectivity light, the settings
+// default-gallery field) and the connectivity probe has a token to send.
+func pairMB(t *testing.T, srv *Server) *Server {
+	t.Helper()
+	tok, _ := config.GenerateToken("monbooru (paired)", config.AllScopes)
+	tok.Paired = "monbooru"
+	if err := srv.updateConfig(func(c *config.Config) error {
+		c.Auth.Tokens = append(c.Auth.Tokens, tok)
+		c.Monbooru.APIToken = "paired-token"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return srv
+}
+
 func TestConnLight(t *testing.T) {
 	mb := monbooruStub()
 	defer mb.Close()
-	up := httptest.NewServer(newWebServer(t, mb.URL, "").Handler())
+	up := httptest.NewServer(pairMB(t, newWebServer(t, mb.URL, "")).Handler())
 	defer up.Close()
 	if _, body := get(t, up, "/internal/monbooru-status"); !strings.Contains(body, "dot-ok") {
 		t.Errorf("reachable monbooru should render a green dot, got %q", body)
@@ -315,7 +340,7 @@ func TestConnLight(t *testing.T) {
 	dead := monbooruStub()
 	deadURL := dead.URL
 	dead.Close()
-	down := httptest.NewServer(newWebServer(t, deadURL, "").Handler())
+	down := httptest.NewServer(pairMB(t, newWebServer(t, deadURL, "")).Handler())
 	defer down.Close()
 	if _, body := get(t, down, "/internal/monbooru-status"); !strings.Contains(body, "dot-down") {
 		t.Errorf("unreachable monbooru should render a red dot, got %q", body)
@@ -327,7 +352,7 @@ func TestConnLight(t *testing.T) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer rejecting.Close()
-	rej := httptest.NewServer(newWebServer(t, rejecting.URL, "").Handler())
+	rej := httptest.NewServer(pairMB(t, newWebServer(t, rejecting.URL, "")).Handler())
 	defer rej.Close()
 	if _, body := get(t, rej, "/internal/monbooru-status"); !strings.Contains(body, "dot-rejected") {
 		t.Errorf("a rejected token should render the amber rejected dot, got %q", body)
@@ -336,17 +361,35 @@ func TestConnLight(t *testing.T) {
 
 // TestConnLightUnconfigured checks the synchronous unreachable path: a blank
 // API URL reports down without a probe and exposes the machine-readable state
-// the add-bar JS reads.
+// the add-bar JS reads. Unpaired, the light shows no visual - only data-conn.
 func TestConnLightUnconfigured(t *testing.T) {
 	srv := newWebServer(t, "", "")
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 	_, body := get(t, ts, "/internal/monbooru-status")
-	if !strings.Contains(body, "dot-down") {
-		t.Errorf("unconfigured monbooru should render a red dot, got %q", body)
-	}
 	if !strings.Contains(body, `data-conn="down"`) {
 		t.Errorf("conn light should expose data-conn for the add-bar JS, got %q", body)
+	}
+	if strings.Contains(body, "dot-") {
+		t.Errorf("unpaired light should render no visual dot, got %q", body)
+	}
+}
+
+// TestConnLightUnpaired checks a configured-but-unpaired instance: with an API
+// URL set but no token, the probe is skipped and the state reads "unpaired", so
+// a first-run instance never claims its token was rejected.
+func TestConnLightUnpaired(t *testing.T) {
+	mb := monbooruStub()
+	defer mb.Close()
+	srv := newWebServer(t, mb.URL, "")
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	_, body := get(t, ts, "/internal/monbooru-status")
+	if !strings.Contains(body, `data-conn="unpaired"`) {
+		t.Errorf("configured-but-unpaired light should report unpaired, got %q", body)
+	}
+	if strings.Contains(body, "dot-") {
+		t.Errorf("unpaired light should render no visual dot, got %q", body)
 	}
 }
 

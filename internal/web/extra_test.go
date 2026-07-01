@@ -538,6 +538,7 @@ func TestBrandingOverride(t *testing.T) {
 // hides both.
 func TestMonbooruLink(t *testing.T) {
 	srv := serverWith(t, noopProc{})
+	pairMB(t, srv)
 	srv.cfg.Current().Monbooru.WebURL = "http://booru.example.com/"
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()

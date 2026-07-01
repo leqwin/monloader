@@ -12,10 +12,10 @@
     {{else if and (eq .Summary.Total 0) (eq .Lead.Status "succeeded")}}
     <span class="hint">no posts matched</span>
     {{else}}
-    <span class="o-created">{{.Summary.Created}} created</span>
-    <span class="o-duplicate">{{.Summary.Duplicate}} duplicate</span>
-    <span class="o-skipped_archive">{{.Summary.Skipped}} skipped</span>
-    <span class="o-failed">{{.Summary.Failed}} failed</span>
+    <span class="o-created{{if not .Summary.Created}} o-zero{{end}}">{{.Summary.Created}} created</span>
+    <span class="o-duplicate{{if not .Summary.Duplicate}} o-zero{{end}}">{{.Summary.Duplicate}} duplicate</span>
+    <span class="o-skipped_archive{{if not .Summary.Skipped}} o-zero{{end}}">{{.Summary.Skipped}} skipped</span>
+    <span class="o-failed{{if not .Summary.Failed}} o-zero{{end}}">{{.Summary.Failed}} failed</span>
     {{if .Summary.Canceled}}<span class="o-canceled">{{.Summary.Canceled}} canceled</span>{{end}}
     <span>{{.Summary.Total}} total</span>
     {{if and .Lead.Capped (ne .Lead.Status "canceled") (ne .Lead.Status "failed")}}<span class="o-capped" title="the first {{.Summary.Total}} were fetched; get more for the next">more available</span>{{end}}

@@ -9,7 +9,7 @@
     <button type="button" hx-post="/settings/sites/{{.Category}}/test" hx-target="#state-{{.Category}}" hx-swap="innerHTML"
             hx-headers='{"X-CSRF-Token":"{{.CSRFToken}}"}'
             hx-on::before-request="document.getElementById('state-{{.Category}}').innerHTML='<span class=&quot;hint&quot;>testing...</span>'">test</button>
-    <button type="button" class="edit-site" data-site="{{.Category}}"
+    <button type="button" class="edit-site" data-site="{{.Category}}" data-auth="{{.Auth}}"
         data-username="{{if .Site}}{{.Site.Username}}{{end}}"
         data-userid="{{if .Site}}{{.Site.UserID}}{{end}}"
         data-gallery="{{if .Site}}{{.Site.Gallery}}{{end}}"

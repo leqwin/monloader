@@ -1,7 +1,6 @@
 package api
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -63,15 +62,15 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	})
 }
 
-// auth gates a handler behind the optional bearer token. When no token is
-// configured the API is open (LAN trust). CORS headers are set on
-// every API response so the extension's origin can call from a browser.
+// auth gates a handler behind a bearer token and per-token scope. With no
+// tokens configured the API is disabled (503). CORS headers are set on every
+// API response so the extension's origin can call from a browser.
 func (h *Handler) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		setCORS(w, r)
-		token := h.cfg.Current().Auth.APIToken
-		if token == "" {
-			next(w, r)
+		cfg := h.cfg.Current()
+		if len(cfg.Auth.Tokens) == 0 {
+			apiError(w, http.StatusServiceUnavailable, "api_disabled", "API is disabled: generate an API token in Settings to enable it")
 			return
 		}
 		const prefix = "Bearer "
@@ -80,12 +79,26 @@ func (h *Handler) auth(next http.HandlerFunc) http.HandlerFunc {
 			apiError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid authorization header")
 			return
 		}
-		if subtle.ConstantTimeCompare([]byte(got[len(prefix):]), []byte(token)) != 1 {
+		tok := cfg.FindTokenByHash(config.HashToken(got[len(prefix):]))
+		if tok == nil {
 			apiError(w, http.StatusUnauthorized, "unauthorized", "invalid bearer token")
+			return
+		}
+		if scope := scopeForMethod(r.Method); !tok.HasScope(scope) {
+			apiError(w, http.StatusForbidden, "insufficient_scope", "token lacks the "+scope+" scope")
 			return
 		}
 		next(w, r)
 	}
+}
+
+// scopeForMethod maps an HTTP method to the privilege a token must hold: writes
+// for POST and the DELETE job-cancel, reads for the rest.
+func scopeForMethod(method string) string {
+	if method == http.MethodPost || method == http.MethodDelete {
+		return config.ScopeWrite
+	}
+	return config.ScopeRead
 }
 
 // setCORS reflects the request Origin so the browser extension (a distinct

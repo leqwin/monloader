@@ -26,6 +26,15 @@ func testClient(url, token string) *Client {
 	return New(config.NewProvider(cfg))
 }
 
+func tempFile(t *testing.T, data []byte) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "f")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func TestPushImageCreatedBareBody(t *testing.T) {
 	data := []byte("the image bytes")
 	var gotGallery, gotAuth, gotVia, gotSource, gotURL, gotCollection, gotOrder, gotTags, gotFilename string
@@ -66,9 +75,9 @@ func TestPushImageCreatedBareBody(t *testing.T) {
 		CollectionOrder: 2,
 		Via:             "monloader",
 	}
-	res, err := testClient(srv.URL, "tok").PushImage(context.Background(), data, meta, "mygallery")
+	res, err := testClient(srv.URL, "tok").PushImageFile(context.Background(), tempFile(t, data), meta, "mygallery")
 	if err != nil {
-		t.Fatalf("PushImage: %v", err)
+		t.Fatalf("PushImageFile: %v", err)
 	}
 	if res.Outcome != queue.OutcomeCreated {
 		t.Errorf("outcome = %s, want created", res.Outcome)
@@ -119,8 +128,8 @@ func TestPushImageCapsLongFields(t *testing.T) {
 		Source:   strings.Repeat("s", maxSourceLen+50),
 		URL:      "https://cdn.example.com/f.jpg?sig=" + strings.Repeat("a", maxURLLen),
 	}
-	if _, err := testClient(srv.URL, "tok").PushImage(context.Background(), []byte("x"), meta, "g"); err != nil {
-		t.Fatalf("PushImage: %v", err)
+	if _, err := testClient(srv.URL, "tok").PushImageFile(context.Background(), tempFile(t, []byte("x")), meta, "g"); err != nil {
+		t.Fatalf("PushImageFile: %v", err)
 	}
 	if len(gotSource) != maxSourceLen {
 		t.Errorf("source len = %d, want %d (trimmed to monbooru's cap)", len(gotSource), maxSourceLen)
@@ -213,9 +222,9 @@ func TestPushImageCreatedEnvelopedWithWarnings(t *testing.T) {
 		})
 	}))
 	defer srv.Close()
-	res, err := testClient(srv.URL, "tok").PushImage(context.Background(), []byte("x"), PushMeta{Via: "monloader"}, "")
+	res, err := testClient(srv.URL, "tok").PushImageFile(context.Background(), tempFile(t, []byte("x")), PushMeta{Via: "monloader"}, "")
 	if err != nil {
-		t.Fatalf("PushImage: %v", err)
+		t.Fatalf("PushImageFile: %v", err)
 	}
 	if res.Outcome != queue.OutcomeCreated || res.MonbooruID != 124 {
 		t.Errorf("got %+v, want created id 124", res)
@@ -235,9 +244,9 @@ func TestPushImageDuplicate(t *testing.T) {
 		})
 	}))
 	defer srv.Close()
-	res, err := testClient(srv.URL, "tok").PushImage(context.Background(), []byte("x"), PushMeta{}, "furry")
+	res, err := testClient(srv.URL, "tok").PushImageFile(context.Background(), tempFile(t, []byte("x")), PushMeta{}, "furry")
 	if err != nil {
-		t.Fatalf("PushImage: %v", err)
+		t.Fatalf("PushImageFile: %v", err)
 	}
 	if res.Outcome != queue.OutcomeDuplicate || res.MonbooruID != 55 {
 		t.Errorf("got %+v, want duplicate id 55", res)
@@ -258,7 +267,7 @@ func TestPushImageErrorClassification(t *testing.T) {
 			w.WriteHeader(tc.status)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "nope", "code": "x"})
 		}))
-		_, err := testClient(srv.URL, "tok").PushImage(context.Background(), []byte("x"), PushMeta{}, "")
+		_, err := testClient(srv.URL, "tok").PushImageFile(context.Background(), tempFile(t, []byte("x")), PushMeta{}, "")
 		srv.Close()
 		e, ok := err.(*queue.CodedError)
 		if !ok || e.Code != tc.want {
@@ -271,7 +280,7 @@ func TestPushImageUnreachable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	url := srv.URL
 	srv.Close() // nothing is listening now
-	_, err := testClient(url, "tok").PushImage(context.Background(), []byte("x"), PushMeta{}, "")
+	_, err := testClient(url, "tok").PushImageFile(context.Background(), tempFile(t, []byte("x")), PushMeta{}, "")
 	e, ok := err.(*queue.CodedError)
 	if !ok || e.Code != queue.ErrCodeMonbooruUnreachable {
 		t.Errorf("got %v, want monbooru_unreachable", err)
@@ -288,7 +297,7 @@ func TestPushImageCanceled(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already canceled before the request goes out
-	_, err := testClient(srv.URL, "tok").PushImage(ctx, []byte("x"), PushMeta{Filename: "x.jpg"}, "g")
+	_, err := testClient(srv.URL, "tok").PushImageFile(ctx, tempFile(t, []byte("x")), PushMeta{Filename: "x.jpg"}, "g")
 	e, ok := err.(*queue.CodedError)
 	if !ok || e.Code != queue.ErrCodeCanceled {
 		t.Errorf("got %v, want canceled", err)

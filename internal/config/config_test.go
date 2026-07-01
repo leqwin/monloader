@@ -40,7 +40,9 @@ func fullConfig() *Config {
 		Auth: AuthConfig{
 			EnablePassword:      false,
 			SessionLifetimeDays: 14,
-			APIToken:            "apitok",
+			Tokens: []Token{
+				{ID: "tok1", Name: "default", TokenHash: "abc123", Scopes: []string{ScopeRead, ScopeWrite}, CreatedAt: "2026-06-29T00:00:00Z"},
+			},
 		},
 		Log: LogConfig{Level: "debug"},
 		Sites: []Site{
@@ -213,7 +215,6 @@ func TestAllEnvOverrides(t *testing.T) {
 		"MONLOADER_GALLERYDL_SLEEP_REQUEST":      "3.5",
 		"MONLOADER_AUTH_ENABLE_PASSWORD":         "false",
 		"MONLOADER_AUTH_PASSWORD_HASH":           "$2b$10$xxxxxxxxxxxxxxxxxxxxxx",
-		"MONLOADER_AUTH_API_TOKEN":               "apit",
 		"MONLOADER_LOG_LEVEL":                    "info",
 	}
 	for k, v := range env {
@@ -241,7 +242,6 @@ func TestAllEnvOverrides(t *testing.T) {
 		{"archive", got.GalleryDL.ArchivePath, "/c/a.sqlite"},
 		{"cookies", got.GalleryDL.CookiesDir, "/c/cookies"},
 		{"sleep", got.GalleryDL.SleepRequest, 3.5},
-		{"authtok", got.Auth.APIToken, "apit"},
 		{"loglevel", got.Log.Level, "info"},
 	}
 	for _, c := range checks {
@@ -286,6 +286,7 @@ func TestProviderAndClone(t *testing.T) {
 	cfg := Default()
 	cfg.Sites = []Site{{Name: "gelbooru", APIKey: "k"}}
 	cfg.TagOverrides = []TagOverride{{Site: "x", From: "a", To: "b"}}
+	cfg.Auth.Tokens = []Token{{ID: "1", Name: "a", Scopes: []string{ScopeRead}}}
 
 	p := NewProvider(cfg)
 	if p.Current() != cfg {
@@ -297,7 +298,8 @@ func TestProviderAndClone(t *testing.T) {
 	clone.Sites[0].APIKey = "changed"
 	clone.TagOverrides = append(clone.TagOverrides, TagOverride{Site: "y"})
 	clone.Monbooru.APIToken = "tok"
-	if cfg.Sites[0].APIKey != "k" || len(cfg.TagOverrides) != 1 || cfg.Monbooru.APIToken != "" {
+	clone.Auth.Tokens[0].Name = "changed"
+	if cfg.Sites[0].APIKey != "k" || len(cfg.TagOverrides) != 1 || cfg.Monbooru.APIToken != "" || cfg.Auth.Tokens[0].Name != "a" {
 		t.Error("Clone aliased the original")
 	}
 
@@ -305,6 +307,38 @@ func TestProviderAndClone(t *testing.T) {
 	p.Store(clone)
 	if p.Current() != clone || p.Current().Monbooru.APIToken != "tok" {
 		t.Error("Store did not publish the new snapshot")
+	}
+}
+
+func TestTokenModelCRUD(t *testing.T) {
+	cfg := Default()
+	tok, secret := GenerateToken("ci", []string{ScopeRead})
+	if len(secret) != 32 || tok.TokenHash != HashToken(secret) || tok.TokenHash == secret {
+		t.Fatal("GenerateToken must hash the secret and return 32 hex chars")
+	}
+	cfg.Auth.Tokens = append(cfg.Auth.Tokens, tok)
+	if !cfg.TokenNameExists("CI") {
+		t.Error("TokenNameExists should be case-insensitive")
+	}
+	if got := cfg.FindTokenByHash(HashToken(secret)); got == nil || !got.HasScope(ScopeRead) || got.HasScope(ScopeWrite) {
+		t.Errorf("lookup/scope mismatch: %+v", got)
+	}
+	if !cfg.SetTokenScopes(tok.ID, AllScopes) || !cfg.FindTokenByHash(HashToken(secret)).HasScope(ScopeWrite) {
+		t.Error("SetTokenScopes did not apply")
+	}
+	if !cfg.RemoveToken(tok.ID) || len(cfg.Auth.Tokens) != 0 {
+		t.Error("RemoveToken did not drop the token")
+	}
+}
+
+func TestValidateTokenNameReserved(t *testing.T) {
+	if err := ValidateTokenName("monbooru"); err != nil {
+		t.Errorf("plain name rejected: %v", err)
+	}
+	for _, bad := range []string{"", "  ", "monbooru (paired)", "X (PAIRED)"} {
+		if err := ValidateTokenName(bad); err == nil {
+			t.Errorf("ValidateTokenName(%q) = nil, want error", bad)
+		}
 	}
 }
 

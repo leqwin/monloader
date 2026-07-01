@@ -84,6 +84,22 @@ func TestProcessProducesOutcomes(t *testing.T) {
 	}
 }
 
+func TestFinishCancelsJobContext(t *testing.T) {
+	var jobCtx context.Context
+	q := New(procFunc(func(ctx context.Context, j *Job) error {
+		jobCtx = ctx
+		createOne(j, 1)
+		return nil
+	}), 1, 100)
+	q.Start()
+	defer q.Close()
+
+	waitFor(t, q, q.Enqueue("http://x", Options{}))
+	if jobCtx.Err() == nil {
+		t.Error("job context should be canceled once the job finishes")
+	}
+}
+
 func TestProcessSucceededAndStartedAt(t *testing.T) {
 	q := New(procFunc(func(ctx context.Context, j *Job) error {
 		createOne(j, 99)

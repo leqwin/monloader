@@ -7,6 +7,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -91,13 +92,11 @@ func TestSettingsNeverEchoesSecrets(t *testing.T) {
 	defer mb.Close()
 	srv := newWebServer(t, mb.URL, "loginpw") // enables the UI password
 	const (
-		mbToken  = "MB-SECRET-TOKEN-zzz"
-		apiToken = "API-SECRET-KEY-zzz"
-		siteKey  = "SITE-SECRET-KEY-zzz"
+		mbToken = "MB-SECRET-TOKEN-zzz"
+		siteKey = "SITE-SECRET-KEY-zzz"
 	)
 	if err := srv.updateConfig(func(c *config.Config) error {
 		c.Monbooru.APIToken = mbToken
-		c.Auth.APIToken = apiToken
 		c.Sites = append(c.Sites, config.Site{Name: "gelbooru", APIKey: siteKey})
 		return nil
 	}); err != nil {
@@ -123,7 +122,6 @@ func TestSettingsNeverEchoesSecrets(t *testing.T) {
 	}
 	for name, secret := range map[string]string{
 		"monbooru token": mbToken,
-		"api token":      apiToken,
 		"site api key":   siteKey,
 		"password hash":  pwHash,
 	} {
@@ -150,9 +148,12 @@ func TestSaveMonbooru(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("status = %d, want 303", resp.StatusCode)
 	}
-	if srv.cfg.Current().Monbooru.APIURL != "http://mb2:8080" || srv.cfg.Current().Monbooru.APIToken != "newtoken" ||
-		srv.cfg.Current().Monbooru.DefaultGallery != "art" || srv.cfg.Current().Monbooru.WebURL != "http://booru.example.com" {
-		t.Errorf("monbooru config not saved: %+v", srv.cfg.Current().Monbooru)
+	c := srv.cfg.Current().Monbooru
+	if c.APIURL != "http://mb2:8080" || c.DefaultGallery != "art" || c.WebURL != "http://booru.example.com" {
+		t.Errorf("monbooru config not saved: %+v", c)
+	}
+	if c.APIToken != "" {
+		t.Errorf("api token must not be settable from the form (pairing only), got %q", c.APIToken)
 	}
 }
 
@@ -479,20 +480,122 @@ func TestAuthPasswordChangeRemove(t *testing.T) {
 	}
 }
 
-func TestAuthTokenGenerate(t *testing.T) {
+func TestAuthTokenCreate(t *testing.T) {
 	mb := monbooruStub()
 	defer mb.Close()
 	srv := newWebServer(t, mb.URL, "")
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	body := readBody(t, postForm(t, ts, srv, "/settings/auth/token", url.Values{}))
-	tok := srv.cfg.Current().Auth.APIToken
-	if len(tok) != 32 {
-		t.Fatalf("API token should be 32 hex chars, got %q (%d)", tok, len(tok))
+	resp := postForm(t, ts, srv, "/settings/auth/tokens", url.Values{"name": {"ci"}})
+	if trig := resp.Header.Get("HX-Trigger"); trig != "token-created" {
+		t.Errorf("a created token should trigger token-created to reset the form, got %q", trig)
 	}
-	if !strings.Contains(body, tok) {
-		t.Errorf("the response should show the generated token once, got %q", body)
+	body := readBody(t, resp)
+	toks := srv.cfg.Current().Auth.Tokens
+	if len(toks) != 1 || toks[0].Name != "ci" {
+		t.Fatalf("want one token named ci, got %+v", toks)
+	}
+	m := regexp.MustCompile(`value="([a-f0-9]{32})"`).FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("response should reveal a 32-hex secret once, got %q", body)
+	}
+	if config.HashToken(m[1]) != toks[0].TokenHash {
+		t.Error("revealed secret does not match the stored hash")
+	}
+}
+
+func TestNotFound(t *testing.T) {
+	mb := monbooruStub()
+	defer mb.Close()
+	srv := newWebServer(t, mb.URL, "")
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	if code, body := get(t, ts, "/no-such-page"); code != http.StatusNotFound {
+		t.Errorf("GET /no-such-page = %d, want 404", code)
+	} else if !strings.Contains(body, "404 - not found") || !strings.Contains(body, "back to monloader") {
+		t.Errorf("themed 404 page expected, got %q", body)
+	}
+
+	if code, body := get(t, ts, "/api/v1/no-such-endpoint"); code != http.StatusNotFound {
+		t.Errorf("GET /api/v1/no-such-endpoint = %d, want 404", code)
+	} else if !strings.Contains(body, `"code":"not_found"`) {
+		t.Errorf("JSON 404 expected for an API path, got %q", body)
+	}
+
+	if code, _ := get(t, ts, "/"); code != http.StatusOK {
+		t.Errorf("GET / = %d, want 200 (add screen still resolves)", code)
+	}
+}
+
+func TestAuthTokenPrivileges(t *testing.T) {
+	mb := monbooruStub()
+	defer mb.Close()
+	srv := newWebServer(t, mb.URL, "")
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	readBody(t, postForm(t, ts, srv, "/settings/auth/tokens", url.Values{"name": {"ci"}}))
+	id := srv.cfg.Current().Auth.Tokens[0].ID
+	readBody(t, postForm(t, ts, srv, "/settings/auth/tokens/"+id+"/privileges", url.Values{"scope": {"read"}}))
+	got := srv.cfg.Current().Auth.Tokens[0].Scopes
+	if len(got) != 1 || got[0] != config.ScopeRead {
+		t.Fatalf("scopes = %v, want [read]", got)
+	}
+}
+
+func TestPairedTokenNotRevocable(t *testing.T) {
+	mb := monbooruStub()
+	defer mb.Close()
+	srv := newWebServer(t, mb.URL, "")
+	tok, _ := config.GenerateToken("monbooru (paired)", config.AllScopes)
+	tok.Paired = "monbooru"
+	if err := srv.updateConfig(func(c *config.Config) error {
+		c.Auth.Tokens = append(c.Auth.Tokens, tok)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("DELETE", "/settings/auth/tokens/"+tok.ID, nil)
+	req.SetPathValue("id", tok.ID)
+	w := httptest.NewRecorder()
+	srv.settingsTokenRevoke(w, req)
+
+	if len(srv.cfg.Current().Auth.Tokens) != 1 {
+		t.Fatalf("paired token was revoked directly; want it kept (manage via pairing)")
+	}
+	if !strings.Contains(w.Body.String(), "pairing") {
+		t.Errorf("expected a pairing hint, got %q", w.Body.String())
+	}
+}
+
+func TestPairedTokenPrivilegesLocked(t *testing.T) {
+	mb := monbooruStub()
+	defer mb.Close()
+	srv := newWebServer(t, mb.URL, "")
+	tok, _ := config.GenerateToken("monbooru (paired)", config.AllScopes)
+	tok.Paired = "monbooru"
+	if err := srv.updateConfig(func(c *config.Config) error {
+		c.Auth.Tokens = append(c.Auth.Tokens, tok)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	form := url.Values{"scope": {config.ScopeRead}}
+	req := httptest.NewRequest("POST", "/settings/auth/tokens/"+tok.ID+"/privileges", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetPathValue("id", tok.ID)
+	w := httptest.NewRecorder()
+	srv.settingsTokenPrivilegesPost(w, req)
+
+	if got := strings.Join(srv.cfg.Current().Auth.Tokens[0].Scopes, " "); got != strings.Join(config.AllScopes, " ") {
+		t.Fatalf("paired token scopes changed to %q; want them unchanged (manage via pairing)", got)
+	}
+	if !strings.Contains(w.Body.String(), "pairing") {
+		t.Errorf("expected a pairing hint, got %q", w.Body.String())
 	}
 }
 

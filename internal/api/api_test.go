@@ -77,11 +77,10 @@ func (fakeProc) Process(ctx context.Context, job *queue.Job) error {
 	return nil
 }
 
-func newTestServer(t *testing.T, token string) *httptest.Server {
+const apiTestToken = "test-token"
+
+func serveCfg(t *testing.T, cfg *config.Config) *httptest.Server {
 	t.Helper()
-	cfg := config.Default()
-	cfg.Auth.APIToken = token
-	cfg.Server.BaseURL = "http://localhost:8081"
 	q := queue.New(fakeProc{}, 1, 100)
 	q.Start()
 	mapper, err := mapping.New(config.NewProvider(cfg))
@@ -101,6 +100,17 @@ func newTestServer(t *testing.T, token string) *httptest.Server {
 	return srv
 }
 
+func newTestServer(t *testing.T, token string) *httptest.Server {
+	t.Helper()
+	cfg := config.Default()
+	cfg.Server.BaseURL = "http://localhost:8081"
+	if token == "" {
+		token = apiTestToken
+	}
+	cfg.Auth.Tokens = []config.Token{{ID: "test", Name: "test", TokenHash: config.HashToken(token), Scopes: config.AllScopes}}
+	return serveCfg(t, cfg)
+}
+
 func doJSON(t *testing.T, method, url, token, body string) (*http.Response, map[string]any) {
 	t.Helper()
 	var r io.Reader
@@ -111,9 +121,10 @@ func doJSON(t *testing.T, method, url, token, body string) (*http.Response, map[
 	if err != nil {
 		t.Fatal(err)
 	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+	if token == "" {
+		token = apiTestToken
 	}
+	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -287,6 +298,35 @@ func TestListGetRetryDelete(t *testing.T) {
 	}
 }
 
+// TestDeleteClearsSeries checks DELETE on a series member drops every window,
+// matching the web route, so a caller need not remove each window separately.
+func TestDeleteClearsSeries(t *testing.T) {
+	srv := newTestServer(t, "")
+
+	_, job := doJSON(t, "POST", srv.URL+"/api/v1/queue?wait=5", "", `{"url":"http://x/cap"}`)
+	root := int64(job["id"].(float64))
+	_, cont := doJSON(t, "POST", srv.URL+"/api/v1/queue/"+itoa(root)+"/continue", "", "")
+	child := int64(cont["job_id"].(float64))
+
+	// Let the continuation finish so the delete removes it rather than canceling a
+	// still-running window (which would leave it in history).
+	for i := 0; i < 200; i++ {
+		_, cj := doJSON(t, "GET", srv.URL+"/api/v1/queue/"+itoa(child), "", "")
+		if s, _ := cj["status"].(string); s != "queued" && s != "running" {
+			break
+		}
+	}
+
+	if resp, _ := doJSON(t, "DELETE", srv.URL+"/api/v1/queue/"+itoa(root), "", ""); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete status = %d, want 204", resp.StatusCode)
+	}
+	for _, id := range []int64{root, child} {
+		if r, _ := doJSON(t, "GET", srv.URL+"/api/v1/queue/"+itoa(id), "", ""); r.StatusCode != http.StatusNotFound {
+			t.Errorf("series member %d present after delete, get = %d, want 404", id, r.StatusCode)
+		}
+	}
+}
+
 // TestRetryForce checks that ?force=1 on the retry endpoint re-queues the job
 // with the archive-bypass flag set, surfaced as "force" on the job.
 func TestRetryForce(t *testing.T) {
@@ -389,10 +429,15 @@ func TestJobExposesSeriesRoot(t *testing.T) {
 
 func TestBearerAuth(t *testing.T) {
 	srv := newTestServer(t, "secret")
-	// No token -> 401 on a guarded endpoint.
-	resp, _ := doJSON(t, "GET", srv.URL+"/api/v1/queue", "", "")
+	// Missing header -> 401 on a guarded endpoint.
+	req, _ := http.NewRequest("GET", srv.URL+"/api/v1/queue", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("tokenless status = %d, want 401", resp.StatusCode)
+		t.Errorf("missing-header status = %d, want 401", resp.StatusCode)
 	}
 	// Wrong token -> 401.
 	resp, _ = doJSON(t, "GET", srv.URL+"/api/v1/queue", "wrong", "")
@@ -408,6 +453,37 @@ func TestBearerAuth(t *testing.T) {
 	resp, _ = doJSON(t, "GET", srv.URL+"/health", "", "")
 	if resp.StatusCode != 200 {
 		t.Errorf("health status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestAPIDisabledWithoutTokens(t *testing.T) {
+	cfg := config.Default()
+	cfg.Server.BaseURL = "http://localhost:8081"
+	srv := serveCfg(t, cfg)
+	resp, body := doJSON(t, "GET", srv.URL+"/api/v1/queue", "x", "")
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+	if body["code"] != "api_disabled" {
+		t.Errorf("code = %v, want api_disabled", body["code"])
+	}
+}
+
+func TestScopeEnforcement(t *testing.T) {
+	cfg := config.Default()
+	cfg.Server.BaseURL = "http://localhost:8081"
+	cfg.Auth.Tokens = []config.Token{{ID: "ro", Name: "ro", TokenHash: config.HashToken("ro-token"), Scopes: []string{config.ScopeRead}}}
+	srv := serveCfg(t, cfg)
+	resp, _ := doJSON(t, "GET", srv.URL+"/api/v1/queue", "ro-token", "")
+	if resp.StatusCode != 200 {
+		t.Errorf("read GET status = %d, want 200", resp.StatusCode)
+	}
+	resp, body := doJSON(t, "POST", srv.URL+"/api/v1/queue", "ro-token", `{"url":"http://danbooru/posts/1"}`)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("read POST status = %d, want 403", resp.StatusCode)
+	}
+	if body["code"] != "insufficient_scope" {
+		t.Errorf("code = %v, want insufficient_scope", body["code"])
 	}
 }
 

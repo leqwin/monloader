@@ -14,7 +14,8 @@ services:
       - /path/to/monloader/config:/config
     environment:
       - MONLOADER_SERVER_BIND_ADDRESS=0.0.0.0:8081
-      # The monbooru instance to push into
+      # Internal URL: how the container reach monbooru on the network
       - MONLOADER_MONBOORU_API_URL=http://monbooru:8080
-      - MONLOADER_MONBOORU_API_TOKEN=${MONBOORU_API_TOKEN}
+      # Browser URL: how you reach monbooru in the browser
+      - MONLOADER_MONBOORU_WEB_URL=http://localhost:8080
     restart: unless-stopped

@@ -323,6 +323,25 @@ func TestContinueFromEarlierWindowAdvancesPastHighWater(t *testing.T) {
 	}
 }
 
+func TestContinueFromEarlierWindowPastShortFinalWindow(t *testing.T) {
+	// A short (below-cap) window still advances the series high-water by the
+	// posts it fetched, so a continue from an earlier window starts past it
+	// rather than re-fetching the window it already took.
+	q := New(noopProcessor{}, 1, 100)
+	id := q.Enqueue("http://x/search", Options{MaxItems: 8})
+	q.index[id].SetCapped(8) // window A: posts 1-8, capped
+	nid, _ := q.Continue(id)
+	q.index[nid].SetItems(make([]Item, 3)) // window B: posts 9-11, short of the cap
+
+	cid, err := q.Continue(id)
+	if err != nil {
+		t.Fatalf("Continue(earlier): %v", err)
+	}
+	if c, _ := q.Get(cid); c.Offset != 11 {
+		t.Errorf("continue past a short window offset = %d, want 11 (8 + 3 fetched)", c.Offset)
+	}
+}
+
 func TestSnapshotLiveSummaryWhileRunning(t *testing.T) {
 	// A running (not finalized) job's snapshot reflects current item outcomes, so
 	// the queue and API show live progress instead of all-zeros until finalize.

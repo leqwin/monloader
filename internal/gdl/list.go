@@ -6,6 +6,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/leqwin/monloader/internal/logx"
 	"github.com/leqwin/monloader/internal/queue"
 )
 
@@ -64,6 +65,9 @@ func parseExtractors(data []byte) []Extractor {
 		}
 	}
 	flush()
+	if err := sc.Err(); err != nil {
+		logx.Warnf("gdl: reading extractor list: %v", err)
+	}
 	return out
 }
 

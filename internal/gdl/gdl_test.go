@@ -289,6 +289,7 @@ func TestWriteManagedConfig(t *testing.T) {
 	cfg.Sites = []config.Site{
 		{Name: "gelbooru", APIKey: "K", UserID: "U", Gallery: "art"},
 		{Name: "e621", Username: "user", APIKey: "k2", Gallery: "furry"},
+		{Name: "danbooru", Username: "solo"},
 	}
 	flatTag := []string{"gelbooru", "safebooru", "konachan", "yandere"}
 
@@ -322,11 +323,18 @@ func TestWriteManagedConfig(t *testing.T) {
 		t.Errorf("raw passthrough did not merge into gelbooru: %+v", gel)
 	}
 	e621 := asMap("e621")
-	if e621["username"] != "user" || e621["api-key"] != "k2" {
+	// The danbooru/e621 family signs in by HTTP Basic Auth, so the key must also
+	// land in "password" or gallery-dl prompts for one and aborts the extraction.
+	if e621["username"] != "user" || e621["api-key"] != "k2" || e621["password"] != "k2" {
 		t.Errorf("e621 block wrong: %+v", e621)
 	}
 	if _, hasTags := e621["tags"]; hasTags {
 		t.Error("e621 is not a flat-tag family; it should not get tags:true")
+	}
+	// A username with no key must not be sent alone, or the danbooru family
+	// prompts for a password and aborts the extraction.
+	if _, hasUser := asMap("danbooru")["username"]; hasUser {
+		t.Error("a username without a key should not be written")
 	}
 	kon := asMap("konachan")
 	if kon["tags"] != true {

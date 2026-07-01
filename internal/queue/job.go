@@ -297,11 +297,16 @@ func (j *Job) seriesKey() int64 {
 }
 
 // windowEnd is the offset just past this window's fetched range: its start plus
-// the cap it took. A window that did not hit the cap contributes only its start.
+// the posts it took - the full cap when capped, else the items it resolved. A
+// short window must still count what it fetched, or a continue from an earlier
+// window in the series would re-fetch it.
 func (j *Job) windowEnd() int {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	return j.Offset + j.Cap
+	if j.Capped {
+		return j.Offset + j.Cap
+	}
+	return j.Offset + len(j.Items)
 }
 
 // Fail records a job-level failure (e.g. the resolve pass errored) and

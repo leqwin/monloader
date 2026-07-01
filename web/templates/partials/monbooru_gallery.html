@@ -1,0 +1,22 @@
+{{define "monbooru_gallery"}}
+<div id="monbooru-default-gallery"{{if .OOB}} hx-swap-oob="true"{{end}}>
+  {{if .Paired}}
+  <div class="settings-cols">
+    <div class="field">
+      <label>default gallery</label>
+      {{if .Galleries}}
+      <select name="default_gallery">
+        <option value=""{{if not .DefaultGallery}} selected{{end}}>(none - monbooru's active gallery)</option>
+        {{range .Galleries}}<option value="{{.Name}}" {{if eq .Name $.DefaultGallery}}selected{{end}}>{{.Name}} ({{.Images}} img)</option>{{end}}
+      </select>
+      {{else}}
+      <input type="text" name="default_gallery" value="{{.DefaultGallery}}">
+      <span class="hint">(galleries unavailable; monbooru unreachable)</span>
+      {{end}}
+      {{if .GalleryWarn}}<span class="hint-warn">{{.GalleryWarn}}</span>{{end}}
+    </div>
+    <div class="field"></div>
+  </div>
+  {{end}}
+</div>
+{{end}}

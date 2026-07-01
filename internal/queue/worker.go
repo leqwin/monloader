@@ -110,7 +110,10 @@ func (q *Queue) runJob(j *Job, ctx context.Context) {
 func (q *Queue) finish(j *Job) {
 	q.mu.Lock()
 	delete(q.running, j.ID)
-	delete(q.cancels, j.ID)
+	if cancel, ok := q.cancels[j.ID]; ok {
+		cancel() // release the context on the normal path too, not only on Cancel
+		delete(q.cancels, j.ID)
+	}
 	q.pushFinishedLocked(j)
 	q.mu.Unlock()
 	j.signalDone()

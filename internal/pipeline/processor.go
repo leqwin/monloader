@@ -312,15 +312,9 @@ func (p *Processor) processItems(ctx context.Context, job *queue.Job, downloaded
 
 // pushOne reads, pushes, and records the outcome of a single downloaded file.
 func (p *Processor) pushOne(ctx context.Context, job *queue.Job, i int, path string, meta monbooru.PushMeta, gallery string) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		failItem(job, i, queue.ErrCodeMappingFailed, err.Error())
-		return
-	}
 	job.UpdateItem(i, func(it *queue.Item) { it.Status = queue.ItemDownloaded })
-
 	job.UpdateItem(i, func(it *queue.Item) { it.Status = queue.ItemUploaded })
-	res, err := p.client.PushImage(ctx, data, meta, gallery)
+	res, err := p.client.PushImageFile(ctx, path, meta, gallery)
 	if err != nil {
 		failItem(job, i, errorCode(err), err.Error())
 		return

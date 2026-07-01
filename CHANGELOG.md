@@ -1,5 +1,25 @@
 # Changelog
 
+## [v1.2.0] - 2026-07-01
+This update include a breaking change with the monbooru and monsender pairing mechanism. Update monbooru to >v1.12.0 and monsender to >v1.2.0 and use the pairing mechanism.
+
+### Added
+- Named, scoped API tokens: create, name, and set per-token privileges in Settings.
+- One-click pairing to connect and disconnect your monbooru instance.
+- Approve or deny browser-extension pairing requests from Settings.
+
+### Changed
+- Every API endpoint now requires a scoped bearer token.
+- Settings reorganized with a section nav sidebar and monbooru-matched layout.
+
+### Fixed
+- Authenticated danbooru/e621-family downloads work again instead of returning nothing.
+- Wide queue and sites tables no longer scroll the whole page sideways.
+
+### Removed
+- The `auth.api_token` config value and `MONLOADER_AUTH_API_TOKEN` env; create a named token instead.
+- The manual monbooru API-token field in Settings; pair instead (env override still works).
+
 ## [v1.1.2] - 2026-06-23
 ### Changed
 - Links to your monbooru instance open in the same tab instead of a new one.

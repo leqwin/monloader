@@ -1,6 +1,18 @@
 {{define "settings"}}{{template "doc_head" .}}
 {{template "topbar" .}}
-<main id="content">
+<div class="settings-shell">
+  <aside class="settings-rail">
+    <nav class="settings-nav">
+      <a href="#monbooru">monbooru</a>
+      <a href="#monsender">monsender</a>
+      <a href="#auth">authentication</a>
+      <a href="#downloads">downloads</a>
+      <a href="#sites">sites</a>
+      <a href="#advanced">advanced</a>
+      <a href="#stats">stats</a>
+    </nav>
+  </aside>
+  <main id="content" class="settings-content">
   <h1 style="margin-bottom:12px">settings</h1>
 
   <section class="settings-section" id="monbooru">
@@ -8,50 +20,50 @@
     {{if eq .FlashSection "monbooru"}}<div class="flash flash-{{.FlashKind}}">{{.Flash}}</div>{{end}}
     <form method="POST" action="/settings/monbooru">
       <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
-      <div class="field">
-        <label>api url</label>
-        <input type="text" name="api_url" value="{{.Cfg.Monbooru.APIURL}}">
+      <div class="settings-cols">
+        <div class="field">
+          <label>api url</label>
+          <input type="text" name="api_url" value="{{.Cfg.Monbooru.APIURL}}" placeholder="http://monbooru:8080">
+          <p class="field-hint">internal URL monloader uses to reach monbooru's API.</p>
+        </div>
+        <div class="field">
+          <label>web url</label>
+          <input type="text" name="web_url" value="{{.Cfg.Monbooru.WebURL}}" placeholder="http://localhost:8080">
+          <p class="field-hint">browser URL for links back to monbooru; blank = same as api url.</p>
+        </div>
       </div>
-      <div class="field">
-        <label>web url</label>
-        <input type="text" name="web_url" value="{{.Cfg.Monbooru.WebURL}}" placeholder="(blank = same as api url)">
-      </div>
-      <div class="field">
-        <label>api token</label>
-        <input type="password" name="api_token" placeholder="{{if .TokenSet}}(set - leave blank to keep){{else}}(unset){{end}}">
-      </div>
-      <div class="field">
-        <label>default gallery</label>
-        {{if .Galleries}}
-        <select name="default_gallery">
-          <option value=""{{if not $.Cfg.Monbooru.DefaultGallery}} selected{{end}}>(none - monbooru's active gallery)</option>
-          {{range .Galleries}}<option value="{{.Name}}" {{if eq .Name $.Cfg.Monbooru.DefaultGallery}}selected{{end}}>{{.Name}} ({{.Images}} img)</option>{{end}}
-        </select>
-        {{else}}
-        <input type="text" name="default_gallery" value="{{.Cfg.Monbooru.DefaultGallery}}">
-        <span class="hint">(galleries unavailable; monbooru unreachable)</span>
-        {{end}}
-        {{if .GalleryWarn}}<span class="hint-warn">{{.GalleryWarn}}</span>{{end}}
-      </div>
+      {{template "monbooru_gallery" (dict "Paired" .MonbooruPaired "Galleries" .Galleries "DefaultGallery" .Cfg.Monbooru.DefaultGallery "GalleryWarn" .GalleryWarn)}}
       <div id="flash-monbooru-test"></div>
       <div class="section-actions">
         <button type="button" hx-post="/settings/monbooru/test" hx-include="closest form" hx-target="#flash-monbooru-test" hx-swap="innerHTML">test connection</button>
         <button type="submit">save</button>
       </div>
     </form>
+    <div class="settings-sub">
+      <h4>pairing</h4>
+      {{template "monbooru_pair" (dict "Paired" .MonbooruPaired "Waiting" .MonbooruPairWaiting "Message" "" "CSRFToken" .CSRFToken)}}
+    </div>
   </section>
 
-  <section class="settings-section">
+  <section class="settings-section" id="monsender">
+    <h2>monsender</h2>
+    {{template "monsender_pairing" (dict "Pending" .MonsenderPending "Paired" .MonsenderPaired "CSRFToken" .CSRFToken)}}
+  </section>
+
+  <section class="settings-section" id="auth">
     <h2>monloader authentication</h2>
     <div id="flash-auth"></div>
     <div class="settings-cols">
       {{template "auth_password_section" (dict "AuthEnabled" .Cfg.Auth.EnablePassword "CSRFToken" .CSRFToken)}}
       <div class="settings-sub">
-        <h4>api key</h4>
-        <p class="field-hint">{{if .Cfg.Auth.APIToken}}an API key is set; the JSON API requires a bearer token.{{else}}no API key set; the JSON API is open on the LAN.{{end}}</p>
-        <form hx-post="/settings/auth/token" hx-target="#flash-auth" hx-swap="innerHTML">
+        <h4>api keys</h4>
+        <p class="field-hint">bearer tokens for the JSON API. the secret is shown once, at creation.</p>
+        {{template "auth_tokens" (dict "Tokens" .Cfg.Auth.Tokens "CSRFToken" .CSRFToken)}}
+        <form hx-post="/settings/auth/tokens" hx-target="#flash-auth" hx-swap="innerHTML" style="margin-top:8px"
+              hx-on:token-created="this.reset()">
           <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
-          <button type="submit">{{if .Cfg.Auth.APIToken}}regenerate api key{{else}}generate api key{{end}}</button>
+          <input type="text" name="name" placeholder="token name" maxlength="64" required>
+          <button type="submit">create token</button>
         </form>
       </div>
     </div>
@@ -63,22 +75,22 @@
     <form method="POST" action="/settings/downloader">
       <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
       <div class="downloads-grid">
-        <div class="dl-field">
+        <div class="field">
           <label>concurrency</label>
           <input type="text" name="concurrency" value="{{.Cfg.Downloader.Concurrency}}">
           <span class="field-hint">parallel download workers (applies on restart)</span>
         </div>
-        <div class="dl-field">
+        <div class="field">
           <label>sleep / request (s)</label>
           <input type="text" name="sleep_request" value="{{.Cfg.GalleryDL.SleepRequest}}">
           <span class="field-hint">delay between requests</span>
         </div>
-        <div class="dl-field">
+        <div class="field">
           <label>max items / job</label>
           <input type="text" name="max_items_per_job" value="{{.Cfg.Downloader.MaxItemsPerJob}}">
           <span class="field-hint">cap on posts per URL</span>
         </div>
-        <div class="dl-field">
+        <div class="field">
           <label>default folder</label>
           <input type="text" name="default_folder" value="{{.Cfg.Downloader.DefaultFolder}}">
           <span class="field-hint">monbooru subfolder for pushes</span>
@@ -103,9 +115,9 @@
         <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
         <input type="hidden" name="name" id="se-name">
         <p>edit <strong id="se-title"></strong> credentials and target gallery</p>
-        <div class="field"><label>username</label><input type="text" name="username" id="se-username"></div>
-        <div class="field"><label>api key</label><input type="password" name="api_key" id="se-apikey"></div>
-        <div class="field"><label>user id</label><input type="text" name="user_id" id="se-userid"></div>
+        <div class="field" id="se-field-username"><label>username</label><input type="text" name="username" id="se-username"></div>
+        <div class="field" id="se-field-apikey"><label>api key</label><input type="password" name="api_key" id="se-apikey"></div>
+        <div class="field" id="se-field-userid"><label>user id</label><input type="text" name="user_id" id="se-userid"></div>
         <div class="field"><label>gallery</label>
           {{if .Galleries}}
           <select name="gallery" id="se-gallery">
@@ -139,7 +151,7 @@
     </form>
   </section>
 
-  <section class="settings-section">
+  <section class="settings-section" id="stats">
     <h2>stats</h2>
     <div class="stats-cols">
       <div class="settings-sub">
@@ -178,6 +190,7 @@
       </div>
     </div>
   </section>
-</main>
+  </main>
+</div>
 {{template "footer" .}}
 {{template "doc_foot" .}}{{end}}

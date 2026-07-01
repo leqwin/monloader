@@ -20,7 +20,8 @@ go build -o monloader ./cmd/monloader
 - `-config` - path to the TOML config file (default `./monloader.toml`).
 - `-hash-password '...'` - print a bcrypt hash for the UI password and exit.
 - `-version` - print the version and exit.
-- `healthcheck` - probe the local `/health` endpoint.
+- `healthcheck` - probe the local `/health` endpoint and exit non-zero if it is
+  not healthy (accepts `-config` and `-timeout`). 
 
 ## gallery-dl
 
@@ -29,5 +30,5 @@ container you supply it yourself.
 
 If it is not on `PATH`, set `gallerydl.binary_path` to its location. A missing
 binary is not fatal at startup - the UI and API still run, the bundled version
-shows as unavailable, and downloads fail with a clear error until it is
+shows as unavailable, and downloads fail until it is
 installed.

@@ -16,6 +16,7 @@
     </div>
   </form>
   <div id="add-flash" class="hint"></div>
+  <div class="table-scroll">
   <table class="queue-table">
     <thead>
       <tr><th>status</th><th>url</th><th>site</th><th>gallery</th><th>summary</th><th></th></tr>
@@ -24,6 +25,7 @@
       {{template "queue_rows" .}}
     </tbody>
   </table>
+  </div>
 </main>
 {{template "footer" .}}
 {{template "doc_foot" .}}{{end}}

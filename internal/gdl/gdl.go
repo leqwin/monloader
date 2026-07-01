@@ -304,6 +304,9 @@ func reportDownloads(r io.Reader, onFile func(int, Downloaded)) []Downloaded {
 		}
 		out = append(out, d)
 	}
+	if err := sc.Err(); err != nil {
+		logx.Warnf("gdl: reading download output: %v", err)
+	}
 	return out
 }
 

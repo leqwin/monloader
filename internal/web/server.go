@@ -36,6 +36,10 @@ type Server struct {
 	configPath string
 	cfgMu      sync.Mutex
 
+	pairMu      sync.Mutex
+	pairAttempt *outboundPair
+	pairs       *pairStore
+
 	queue      *queue.Queue
 	client     *monbooru.Client
 	runner     gdl.Runner
@@ -68,6 +72,7 @@ func NewServer(cfg *config.Provider, configPath string, q *queue.Queue, client *
 		configPath: configPath,
 		queue:      q,
 		client:     client,
+		pairs:      newPairStore(),
 		runner:     runner,
 		mapper:     mapper,
 		extractors: extractors,
@@ -116,11 +121,28 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("POST /settings/auth/password", s.settingsPasswordPost)
 	mux.HandleFunc("POST /settings/auth/remove-password", s.settingsRemovePasswordPost)
-	mux.HandleFunc("POST /settings/auth/token", s.settingsTokenPost)
+	mux.HandleFunc("POST /settings/auth/tokens", s.settingsTokenCreate)
+	mux.HandleFunc("DELETE /settings/auth/tokens/{id}", s.settingsTokenRevoke)
+	mux.HandleFunc("GET /settings/auth/tokens/{id}/privileges", s.settingsTokenPrivilegesGet)
+	mux.HandleFunc("POST /settings/auth/tokens/{id}/privileges", s.settingsTokenPrivilegesPost)
+	mux.HandleFunc("POST /settings/monbooru/pair/connect", s.monbooruPairConnect)
+	mux.HandleFunc("POST /settings/monbooru/pair/poll", s.monbooruPairPoll)
+	mux.HandleFunc("POST /settings/monbooru/pair/remove", s.monbooruPairRemove)
+	mux.HandleFunc("POST /api/v1/pair/request", s.extPairRequest)
+	mux.HandleFunc("GET /api/v1/pair/status", s.extPairStatus)
+	mux.HandleFunc("POST /api/v1/pair/remove", s.extPairTeardown)
+	mux.HandleFunc("GET /internal/monsender-pairing", s.monsenderPairingFragment)
+	mux.HandleFunc("POST /settings/auth/pair/{id}/approve", s.monsenderPairApprove)
+	mux.HandleFunc("POST /settings/auth/pair/{id}/deny", s.monsenderPairDeny)
+	mux.HandleFunc("POST /settings/auth/pair/remove", s.monsenderPairRemove)
 
 	mux.HandleFunc("GET /login", s.loginPage)
 	mux.HandleFunc("POST /login", s.loginPost)
 	mux.HandleFunc("POST /logout", s.logoutPost)
+
+	// Catch-all for unmatched GETs; the exact-root "GET /{$}" above takes
+	// precedence for the add screen.
+	mux.HandleFunc("GET /", s.notFound)
 
 	api.New(s.queue, s.runner, s.mapper, s.cfg, s.extractors, Version, s.gdlVersion).Mount(mux)
 
@@ -258,6 +280,9 @@ func (s *Server) base(r *http.Request, nav, title string) map[string]any {
 		"BooruLogo":        s.booruLogoURL(),
 		"BooruFavicon":     s.booruFaviconURL(),
 		"Conn":             "checking",
+		// MonbooruPaired gates the footer "connected to monbooru" light: it
+		// renders (and polls) only while a monbooru pairing exists.
+		"MonbooruPaired": s.hasPairedToken("monbooru"),
 		// Synchronously known reachability: an unset API URL is definitively
 		// unreachable, so the add/queue banner and the blocked submit render
 		// server-side at once. A configured-but-down instance is left to the
@@ -371,14 +396,18 @@ func (s *Server) monbooruConfigured() bool {
 	return s.cfg.Current().Monbooru.APIURL != ""
 }
 
-// checkMonbooru returns "ok", "rejected" (monbooru answered but refused the
-// token), or "down" (no response) from a short-lived connectivity probe, plus
-// the monbooru version when the probe succeeds ("" otherwise). The rejected
-// state distinguishes a bad/expired token from an actual network outage, which
-// otherwise both read as "unreachable".
+// checkMonbooru returns "ok", "unpaired" (no token to authenticate with yet),
+// "rejected" (monbooru answered but refused the token), or "down" (no response)
+// from a short-lived connectivity probe, plus the monbooru version when the
+// probe succeeds ("" otherwise). Separating unpaired and rejected keeps a
+// first-run instance from claiming a token was refused, and rejected from
+// reading as an outage.
 func (s *Server) checkMonbooru(ctx context.Context) (status, version string) {
 	if !s.monbooruConfigured() {
 		return "down", ""
+	}
+	if s.cfg.Current().Monbooru.APIToken == "" {
+		return "unpaired", ""
 	}
 	cctx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()

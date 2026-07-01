@@ -23,6 +23,19 @@ func (s *Server) addScreen(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "add", s.base(r, "add", s.booruName()))
 }
 
+// notFound serves a themed page for unmatched browser routes and a JSON error
+// for unmatched API routes, in place of net/http's plain-text default.
+func (s *Server) notFound(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"not found","code":"not_found"}`))
+		return
+	}
+	w.WriteHeader(http.StatusNotFound)
+	s.render(w, "notfound", s.base(r, "", "not found"))
+}
+
 // enqueueForm handles the add bar (POST /). On success it sends the operator
 // to the queue screen (HX-Redirect) so they can follow the job; a bad request
 // stays put with an inline flash fragment swapped into #add-flash.
@@ -230,6 +243,7 @@ func (s *Server) monbooruStatus(w http.ResponseWriter, r *http.Request) {
 		"Conn":            status,
 		"MonbooruWebURL":  s.monbooruWebLink(),
 		"MonbooruVersion": version,
+		"MonbooruPaired":  s.hasPairedToken("monbooru"),
 	})
 }
 
@@ -240,6 +254,7 @@ func (s *Server) monbooruStatus(w http.ResponseWriter, r *http.Request) {
 type siteRow struct {
 	Category    string
 	Login       string
+	Auth        string
 	NeedsCred   bool
 	Site        *config.Site
 	CSRFToken   string
@@ -254,7 +269,7 @@ func (s *Server) siteRows(cats []string, csrf string) []siteRow {
 		site := s.cfg.Current().FindSite(cat)
 		label, needs := loginInfo(p.Auth, site)
 		rows = append(rows, siteRow{
-			Category: cat, Login: label, NeedsCred: needs, Site: site, CSRFToken: csrf,
+			Category: cat, Login: label, Auth: p.Auth, NeedsCred: needs, Site: site, CSRFToken: csrf,
 			LastReached: s.siteState.LastReached(cat),
 		})
 	}
@@ -264,7 +279,6 @@ func (s *Server) siteRows(cats []string, csrf string) []siteRow {
 func (s *Server) settingsScreen(w http.ResponseWriter, r *http.Request) {
 	data := s.base(r, "settings", "settings - "+s.booruName())
 	data["Cfg"] = s.cfg.Current()
-	data["TokenSet"] = s.cfg.Current().Monbooru.APIToken != ""
 
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
@@ -279,6 +293,10 @@ func (s *Server) settingsScreen(w http.ResponseWriter, r *http.Request) {
 	data["BooruSites"] = s.siteRows(s.mapper.CuratedByKind(mapping.KindBooru), csrf)
 	data["MangaSites"] = s.siteRows(s.mapper.CuratedByKind(mapping.KindManga), csrf)
 	data["Stats"] = s.gatherStats()
+	data["MonbooruPaired"] = s.hasPairedToken("monbooru")
+	data["MonbooruPairWaiting"] = s.getPairAttempt() != nil
+	data["MonsenderPending"] = s.pairs.listPending()
+	data["MonsenderPaired"] = s.pairedExists("monsender")
 
 	if msg := r.URL.Query().Get("msg"); msg != "" {
 		data["Flash"] = msg
@@ -304,6 +322,25 @@ func defaultGalleryWarning(name string, galleries []monbooru.Gallery) string {
 		}
 	}
 	return "gallery \"" + name + "\" is not in monbooru - pushes will be rejected until it exists"
+}
+
+// renderDefaultGalleryOOB re-renders the default-gallery field out of band so it
+// appears the moment a monbooru pairing completes, without a page reload.
+func (s *Server) renderDefaultGalleryOOB(w http.ResponseWriter, r *http.Request) {
+	data := map[string]any{
+		"OOB":            true,
+		"Paired":         s.hasPairedToken("monbooru"),
+		"DefaultGallery": s.cfg.Current().Monbooru.DefaultGallery,
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+	defer cancel()
+	if galleries, err := s.client.ListGalleries(ctx); err == nil {
+		data["Galleries"] = galleries
+		if warn := defaultGalleryWarning(s.cfg.Current().Monbooru.DefaultGallery, galleries); warn != "" {
+			data["GalleryWarn"] = warn
+		}
+	}
+	s.render(w, "monbooru_gallery", data)
 }
 
 // statsData backs the settings Stats section: process memory, the bundled
@@ -428,9 +465,6 @@ func (s *Server) saveMonbooru(w http.ResponseWriter, r *http.Request) {
 	err := s.updateConfig(func(c *config.Config) error {
 		c.Monbooru.APIURL = strings.TrimSpace(r.FormValue("api_url"))
 		c.Monbooru.WebURL = strings.TrimSpace(r.FormValue("web_url"))
-		if tok := r.FormValue("api_token"); tok != "" {
-			c.Monbooru.APIToken = tok
-		}
 		c.Monbooru.DefaultGallery = strings.TrimSpace(r.FormValue("default_gallery"))
 		return nil
 	})
@@ -447,17 +481,14 @@ func (s *Server) testMonbooru(w http.ResponseWriter, r *http.Request) {
 	if v := strings.TrimSpace(r.FormValue("api_url")); v != "" {
 		tmp.Monbooru.APIURL = v
 	}
-	if v := r.FormValue("api_token"); v != "" {
-		tmp.Monbooru.APIToken = v
-	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	if _, err := monbooru.New(config.NewProvider(&tmp)).TestConnection(ctx); err != nil {
 		flashFragment(w, "err", "connection failed: "+err.Error())
 		return
 	}
-	// An htmx swap, not a redirect, so the typed token stays in the field and a
-	// following save persists it rather than the page reload blanking it first.
+	// An htmx swap into the result slot, not a redirect, so the form's unsaved
+	// values survive for a following save rather than being blanked by a reload.
 	flashFragment(w, "ok", "monbooru reachable - save to keep these settings")
 }
 

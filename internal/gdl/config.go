@@ -55,11 +55,16 @@ func WriteManagedConfig(cfg *config.Config, flatTagSites []string) error {
 		if block == nil {
 			block = map[string]any{}
 		}
-		if site.Username != "" {
+		// A lone username (no key) makes the danbooru/e621 family prompt for a
+		// password and abort in the non-TTY subprocess, so only send it with a key.
+		if site.Username != "" && site.APIKey != "" {
 			block["username"] = site.Username
 		}
 		if site.APIKey != "" {
 			block["api-key"] = site.APIKey
+			// The danbooru/e621 family authenticates by HTTP Basic Auth and reads the
+			// key from "password"; gelbooru reads "api-key". Set both so either works.
+			block["password"] = site.APIKey
 		}
 		if site.UserID != "" {
 			block["user-id"] = site.UserID

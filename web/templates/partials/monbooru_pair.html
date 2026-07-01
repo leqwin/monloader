@@ -1,0 +1,24 @@
+{{define "monbooru_pair"}}
+<div id="monbooru-pair"{{if .Waiting}} hx-post="/settings/monbooru/pair/poll" hx-trigger="every 2s" hx-swap="outerHTML" hx-headers='{"X-CSRF-Token":"{{.CSRFToken}}"}'{{end}}>
+  {{$csrf := .CSRFToken}}
+  {{if .Paired}}
+  <p class="field-hint">connected to monbooru.
+    <form hx-post="/settings/monbooru/pair/remove" hx-target="#monbooru-pair" hx-swap="outerHTML"
+          hx-confirm="remove the monbooru pairing?" data-confirm-ok="remove"
+          data-confirm-danger="you will need to re-pair before monloader can push again." style="display:inline">
+      <input type="hidden" name="_csrf" value="{{$csrf}}">
+      <button type="submit" class="btn-danger">remove pairing</button>
+    </form>
+  </p>
+  {{else if .Waiting}}
+  <p class="field-hint">waiting for approval in monbooru... approve the request there to complete the pairing.</p>
+  {{else}}
+  <p class="field-hint">To pair with monbooru : click connect, then approve the request in monbooru's monloader settings.</p>
+  <form hx-post="/settings/monbooru/pair/connect" hx-target="#monbooru-pair" hx-swap="outerHTML" style="display:inline">
+    <input type="hidden" name="_csrf" value="{{$csrf}}">
+    <button type="submit">connect to monbooru</button>
+  </form>
+  {{if .Message}} <span class="hint">{{.Message}}</span>{{end}}
+  {{end}}
+</div>
+{{end}}

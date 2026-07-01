@@ -74,22 +74,10 @@ func (c *Client) authHeader(req *http.Request) {
 	}
 }
 
-// PushImage uploads file bytes plus mapped metadata to
-// POST /api/v1/images?gallery=<name>, computing the sha256 the item carries and
-// sending a buffered multipart body.
-func (c *Client) PushImage(ctx context.Context, data []byte, meta PushMeta, gallery string) (*Result, error) {
-	sum := sha256.Sum256(data)
-	sha := hex.EncodeToString(sum[:])
-	body, contentType, err := buildMultipart(data, meta)
-	if err != nil {
-		return nil, &queue.CodedError{Code: queue.ErrCodeMappingFailed, Msg: err.Error()}
-	}
-	return c.sendPush(ctx, c.imagesEndpoint(gallery), contentType, body, sha)
-}
-
-// PushImageFile streams a file (a built .cbz) plus mapped metadata to the same
-// endpoint, hashing it in a streaming pass and writing the multipart body
-// through an io.Pipe so a large archive is never buffered whole in memory.
+// PushImageFile streams a file plus mapped metadata to
+// POST /api/v1/images?gallery=<name>, hashing it in a streaming pass and writing
+// the multipart body through an io.Pipe so the file is never buffered whole in
+// memory.
 func (c *Client) PushImageFile(ctx context.Context, path string, meta PushMeta, gallery string) (*Result, error) {
 	sha, err := fileSHA256(path)
 	if err != nil {
@@ -170,22 +158,6 @@ func fileSHA256(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
-// buildMultipart assembles a buffered POST /api/v1/images body from bytes.
-func buildMultipart(data []byte, meta PushMeta) (*bytes.Buffer, string, error) {
-	buf := &bytes.Buffer{}
-	w := multipart.NewWriter(buf)
-	if err := writeFilePart(w, meta.Filename, bytes.NewReader(data)); err != nil {
-		return nil, "", err
-	}
-	if err := writeMetaFields(w, meta); err != nil {
-		return nil, "", err
-	}
-	if err := w.Close(); err != nil {
-		return nil, "", err
-	}
-	return buf, w.FormDataContentType(), nil
 }
 
 // streamFileMultipart writes the multipart body for a file push into w (backed
@@ -353,4 +325,82 @@ func (c *Client) TestConnection(ctx context.Context) (string, error) {
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&info)
 	return info.Version, nil
+}
+
+// PairRequest sends a pairing offer to monbooru and returns the request id. The
+// pairing endpoints are unauthenticated (the operator approves in monbooru), so
+// no bearer token is sent. selfURL is how monbooru should reach this monloader;
+// peerToken is the token monbooru will use to call back.
+func (c *Client) PairRequest(ctx context.Context, peerToken, selfURL string, scopes []string) (string, error) {
+	body, _ := json.Marshal(map[string]any{
+		"app":              "monloader",
+		"url":              selfURL,
+		"requested_scopes": scopes,
+		"peer_token":       peerToken,
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base()+"/api/v1/pair/request", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	var out struct {
+		RequestID string `json:"request_id"`
+		Error     string `json:"error"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	if resp.StatusCode != http.StatusOK {
+		if out.Error != "" {
+			return "", fmt.Errorf("%s", out.Error)
+		}
+		return "", fmt.Errorf("monbooru pairing request failed: %s", resp.Status)
+	}
+	return out.RequestID, nil
+}
+
+// PairStatus polls a pairing request. On approval it returns the issued token
+// once; otherwise the token is empty and status carries the state.
+func (c *Client) PairStatus(ctx context.Context, requestID string) (status, token string, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base()+"/api/v1/pair/status?id="+url.QueryEscape(requestID), nil)
+	if err != nil {
+		return "", "", err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Status string `json:"status"`
+		Token  string `json:"token"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("monbooru pairing status failed: %s", resp.Status)
+	}
+	return out.Status, out.Token, nil
+}
+
+// PairTeardown asks monbooru to drop its side of the pairing, authenticating
+// with the token monbooru issued (captured by the caller before it clears the
+// stored credential). Best-effort: the caller proceeds whatever this returns.
+func (c *Client) PairTeardown(ctx context.Context, token string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base()+"/api/v1/pair/remove", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("monbooru pairing remove failed: %s", resp.Status)
+	}
+	return nil
 }

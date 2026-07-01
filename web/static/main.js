@@ -69,22 +69,22 @@ document.body.addEventListener("htmx:afterSwap", function (e) {
 
 // Reflect monbooru connectivity into the add forms. The footer light polls
 // /internal/monbooru-status and swaps its live state onto data-conn; when
-// monbooru is unreachable or rejecting the token, reveal the top banner and
-// block URL submission (a queued download could only fail at the push step).
-// The transient "checking" state leaves the server-rendered state in place so
-// the banner does not flash.
+// monbooru is unreachable, unpaired, or rejecting the token, reveal the top
+// banner and block URL submission (a queued download could only fail at the
+// push step). The transient "checking" state leaves the server-rendered state
+// in place so the banner does not flash.
 function applyMonbooruState(conn) {
-  if (conn !== "down" && conn !== "ok" && conn !== "rejected") {
+  if (conn !== "down" && conn !== "ok" && conn !== "rejected" && conn !== "unpaired") {
     return;
   }
-  var blocked = conn === "down" || conn === "rejected";
+  var blocked = conn === "down" || conn === "rejected" || conn === "unpaired";
   var banner = document.getElementById("monbooru-banner");
   if (banner) {
     banner.hidden = !blocked;
     var msg = document.getElementById("monbooru-banner-msg");
     if (msg && blocked) {
-      msg.textContent = conn === "rejected"
-        ? "monbooru rejected the api token"
+      msg.textContent = conn === "rejected" ? "monbooru rejected the api token"
+        : conn === "unpaired" ? "monbooru is not paired"
         : "monbooru is unreachable";
     }
   }
@@ -120,6 +120,13 @@ document.body.addEventListener("click", function (e) {
   var key = document.getElementById("se-apikey");
   key.value = "";
   key.placeholder = d.haskey ? "(set - leave blank to keep)" : "(unset)";
+  // Show only the credentials this site's auth kind uses: the danbooru/e621
+  // family signs in by username, gelbooru by user id; cookies/none sites neither.
+  var auth = d.auth || "";
+  document.getElementById("se-field-username").style.display = auth === "api_optional" ? "" : "none";
+  document.getElementById("se-field-apikey").style.display =
+    auth === "api_optional" || auth === "api_required" ? "" : "none";
+  document.getElementById("se-field-userid").style.display = auth === "api_required" ? "" : "none";
   document.getElementById("site-edit-dialog").showModal();
 });
 
@@ -162,4 +169,13 @@ document.body.addEventListener("htmx:confirm", function (e) {
   var okLabel = elt && elt.dataset ? elt.dataset.confirmOk : "";
   var danger = !!(elt && elt.hasAttribute && elt.hasAttribute("data-confirm-danger"));
   showConfirm(e.detail.question, function () { e.detail.issueRequest(true); }, okLabel, danger);
+});
+
+// The per-token privileges dialog closes itself on a successful save; the
+// scopes cell and the parent flash arrive as OOB swaps.
+document.body.addEventListener("token-saved", function (e) {
+  var id = e.detail && e.detail.dialog;
+  if (!id) return;
+  var dlg = document.getElementById(id);
+  if (dlg && dlg.open) dlg.close();
 });

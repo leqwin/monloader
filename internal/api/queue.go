@@ -196,13 +196,14 @@ func (h *Handler) continueAllJob(w http.ResponseWriter, r *http.Request) {
 }
 
 // deleteJob handles DELETE /api/v1/queue/{id}: cancels a running job, else
-// removes it.
+// removes it. It acts on the whole continue-series like the web route, so a
+// caller clearing a collapsed row drops every window, not just the one named.
 func (h *Handler) deleteJob(w http.ResponseWriter, r *http.Request) {
 	id, ok := apiPathInt64(w, r, "id")
 	if !ok {
 		return
 	}
-	if err := h.queue.Cancel(id); err != nil {
+	if err := h.queue.CancelSeries(id); err != nil {
 		apiError(w, http.StatusNotFound, "not_found", "job not found")
 		return
 	}
